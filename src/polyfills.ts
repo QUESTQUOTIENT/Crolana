@@ -6,24 +6,32 @@
  *
  * MUST be the very first import in src/main.tsx.
  *
- * Two-layer strategy:
- *   Layer 1: Synchronous inline shim in index.html (before SES lockdown)
- *   Layer 2: This file replaces the shim with the real 'buffer' npm package
- *            immediately after the module graph loads.
+ * Execution order matters:
+ *   1. index.html inline scripts run synchronously (Buffer shim + theme)
+ *   2. This file runs as the first ES module — replaces shims with real impls
+ *   3. SES lockdown runs (from @metaplex-foundation/umi-bundle-defaults)
+ *   4. App code runs
+ *
+ * Properties set on globalThis/window BEFORE SES lockdown survive lockdown.
+ * SES only strips from JS realm intrinsics, not custom window properties.
  */
 
-// ─── Real Buffer from npm 'buffer' package ────────────────────────────────────
+// ─── Buffer ───────────────────────────────────────────────────────────────────
 import { Buffer as RealBuffer } from 'buffer';
-
-// Overwrite the inline shim with the real implementation unconditionally.
-// SES lockdown (from @metaplex-foundation/umi-bundle-defaults) runs AFTER
-// module evaluation. Setting these on globalThis here happens BEFORE lockdown,
-// so SES cannot remove them (it only strips from the realm's intrinsic slots,
-// not from custom window properties set before lockdown).
 (globalThis as any).Buffer = RealBuffer;
-if (typeof window !== 'undefined') {
-  (window as any).Buffer = RealBuffer;
-}
+if (typeof window !== 'undefined') (window as any).Buffer = RealBuffer;
+
+// ─── BN (BigNumber) ───────────────────────────────────────────────────────────
+// "TypeError: can't access property 'BN', n is undefined"
+//
+// Root cause: bn.js is CJS (`module.exports = BN`). Packages like
+// @metaplex/beet and borsh import it as `import { BN } from 'bn.js'`.
+// Rollup's CJS→ESM interop can fail to surface the named export.
+// Setting it as a global ensures all consumers find it regardless of
+// how their import resolves through the bundle.
+import BN from 'bn.js';
+(globalThis as any).BN = BN;
+if (typeof window !== 'undefined') (window as any).BN = BN;
 
 // ─── process ─────────────────────────────────────────────────────────────────
 if (typeof (globalThis as any).process === 'undefined') {
@@ -36,7 +44,6 @@ if (typeof (globalThis as any).process === 'undefined') {
   };
 } else {
   const p = (globalThis as any).process;
-  // Ensure process.browser is set (used by some Solana/Metaplex internals)
   p.browser = true;
   if (!p.nextTick) {
     p.nextTick = (fn: (...args: unknown[]) => void, ...args: unknown[]) =>
@@ -46,8 +53,11 @@ if (typeof (globalThis as any).process === 'undefined') {
   if (!p.env.NODE_ENV) p.env.NODE_ENV = import.meta.env.MODE ?? 'development';
 }
 
+// ─── global ───────────────────────────────────────────────────────────────────
+// Some CJS packages access `global` directly (Node.js idiom)
+(globalThis as any).global = globalThis;
+
 // ─── TextEncoder / TextDecoder ────────────────────────────────────────────────
-// Belt-and-suspenders for very old mobile WebViews and Phantom in-app browser.
 if (typeof (globalThis as any).TextEncoder === 'undefined') {
   (globalThis as any).TextEncoder = class {
     encode(s: string) {
@@ -64,27 +74,21 @@ if (typeof (globalThis as any).TextDecoder === 'undefined') {
 }
 
 // ─── crypto.getRandomValues ───────────────────────────────────────────────────
-// Required by tweetnacl + @solana/web3.js key generation.
-// Available on all modern browsers but guard anyway for old Android WebView.
 if (
   typeof (globalThis as any).crypto === 'undefined' ||
   typeof (globalThis as any).crypto.getRandomValues === 'undefined'
 ) {
   (globalThis as any).crypto = {
     getRandomValues: (arr: Uint8Array) => {
-      for (let i = 0; i < arr.length; i++) {
-        arr[i] = Math.floor(Math.random() * 256);
-      }
+      for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
       return arr;
     },
   };
 }
 
-// ─── queueMicrotask ──────────────────────────────────────────────────────────
-// Used by some Metaplex utilities. Polyfill for iOS <13.
+// ─── queueMicrotask ───────────────────────────────────────────────────────────
 if (typeof (globalThis as any).queueMicrotask === 'undefined') {
-  (globalThis as any).queueMicrotask = (fn: () => void) =>
-    Promise.resolve().then(fn);
+  (globalThis as any).queueMicrotask = (fn: () => void) => Promise.resolve().then(fn);
 }
 
 export {};

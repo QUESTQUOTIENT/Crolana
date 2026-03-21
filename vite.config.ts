@@ -20,43 +20,42 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
 
-        // Real buffer npm package (trailing slash required)
+        // ── Real buffer npm package (trailing slash required) ──────────────
         buffer: 'buffer/',
 
-        // ── Node.js built-in shims ──────────────────────────────────────
-        // `stream` MUST use a real stub with Readable/Writable/Transform.
-        // The empty-stub caused: "can't access property 'prototype',
-        // Ee.Readable is undefined" because ws/concat-stream/keccak all do
+        // ── stream: MUST be a real stub with Readable/Writable/Transform ──
+        // An empty stub causes: "can't access property 'prototype', Ee.Readable
+        // is undefined" because ws/concat-stream/keccak do:
         //   const { Readable } = require('stream');
         //   Child.prototype = Object.create(Readable.prototype);
-        stream:   path.resolve(__dirname, 'src/lib/stream-stub.ts'),
+        stream: path.resolve(__dirname, 'src/lib/stream-stub.ts'),
 
-        // These are genuinely unused in browser paths — empty stubs are safe.
+        // ── These are genuinely unused in browser paths ─────────────────────
         http:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         https:    path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         url:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         zlib:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         punycode: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
-        // ws uses Node net/tls/http internals — alias to empty so it falls
-        // back to the browser's native WebSocket (set by @solana/web3.js)
         net:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         tls:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         dns:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         os:       path.resolve(__dirname, 'src/lib/empty-stub.ts'),
-        path:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         fs:       path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         crypto:   path.resolve(__dirname, 'src/lib/empty-stub.ts'),
       },
     },
 
     optimizeDeps: {
+      // Pre-bundling ensures Vite's dev server (and esbuild) converts these
+      // CJS packages to ESM before any code runs — fixes import { BN } from 'bn.js'
       include: [
+        'bn.js',
         'buffer',
         'process',
-        '@solana/web3.js',
-        '@solana/spl-token',
         'bs58',
         'tweetnacl',
+        '@solana/web3.js',
+        '@solana/spl-token',
         'react',
         'react-dom',
         'react-router-dom',
@@ -77,37 +76,39 @@ export default defineConfig(({ mode }) => {
     },
 
     build: {
-      // es2020 + safari14 ensures mobile Safari 14+ is supported without issues.
-      // Chrome 80 covers Android WebView since ~2020.
+      // Target covers: iOS Safari 14+, Chrome 80 (Android WebView), Firefox 79
       target: ['es2020', 'chrome80', 'safari14', 'firefox79'],
 
       outDir: 'dist',
       sourcemap: false,
-
-      // Warn when any single chunk exceeds 1 MB (helps catch regressions)
       chunkSizeWarningLimit: 1000,
 
       commonjsOptions: {
         transformMixedEsModules: true,
+
+        // ── CRITICAL: explicit named exports for CJS-only packages ──────────
+        // bn.js ships as `module.exports = BN` (single CJS export).
+        // @metaplex/beet, borsh, and keccak256 import it as:
+        //   import { BN } from 'bn.js'   ← named ESM import
+        // Without this hint, Rollup's CJS→ESM transform can't see 'BN' as a
+        // named export → bundles it as `undefined` → crash at runtime.
+        namedExports: {
+          'bn.js': ['BN'],
+          // readable-stream is also CJS-only with named exports
+          'readable-stream': ['Readable', 'Writable', 'Duplex', 'Transform', 'PassThrough', 'Stream'],
+        },
       },
 
       rollupOptions: {
-        // Suppress noisy "use client" directive warnings from React 19 packages
         onwarn(warning, defaultHandler) {
+          // Suppress noisy but harmless warnings from React 19 + Metaplex
           if (warning.code === 'MODULE_LEVEL_DIRECTIVE') return;
           if (warning.code === 'CIRCULAR_DEPENDENCY') return;
+          if (warning.code === 'THIS_IS_UNDEFINED') return;
           defaultHandler(warning);
         },
 
         output: {
-          // Fine-grained manual chunks to keep each chunk under ~500 KB:
-          //   react-vendor  — React + router (rarely changes, long-lived cache)
-          //   solana        — @solana/web3.js + SPL + crypto utilities
-          //   metaplex      — Metaplex UMI + MPL programs (largest; own chunk)
-          //   ethers        — ethers.js EVM library
-          //   ui-vendor     — recharts, lucide, motion, zustand
-          //   vendor        — everything else from node_modules
-          //   Page chunks are auto-split by Rollup via React.lazy()
           manualChunks(id: string) {
             if (!id.includes('node_modules')) return undefined;
 
@@ -119,7 +120,7 @@ export default defineConfig(({ mode }) => {
               id.includes('/scheduler/')
             ) return 'react-vendor';
 
-            // Metaplex — includes SES lockdown (largest single group)
+            // Metaplex — includes SES lockdown
             if (
               id.includes('@metaplex-foundation') ||
               id.includes('mpl-candy-machine') ||
@@ -128,13 +129,19 @@ export default defineConfig(({ mode }) => {
               id.includes('borsh')
             ) return 'metaplex';
 
-            // Solana web3 + SPL + crypto deps
+            // Solana + bn.js MUST be in the same chunk.
+            // bn.js is used by @solana/web3.js, @metaplex/beet, and borsh.
+            // Keeping them together ensures bn.js is initialized before any
+            // consumer code runs, preventing "n.BN is undefined" at runtime.
             if (
               id.includes('@solana/') ||
+              id.includes('/bn.js/') ||
+              id.includes('/bn.js\\') ||
+              id.includes('bn.js/lib') ||
+              id === 'bn.js' ||
               id.includes('bs58') ||
               id.includes('tweetnacl') ||
               id.includes('buffer') ||
-              id.includes('bn.js') ||
               id.includes('superstruct')
             ) return 'solana';
 
@@ -158,7 +165,6 @@ export default defineConfig(({ mode }) => {
               id.includes('tailwind-merge')
             ) return 'ui-vendor';
 
-            // Everything else in node_modules
             return 'vendor';
           },
         },
