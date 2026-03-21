@@ -23,13 +23,29 @@ export default defineConfig(({ mode }) => {
         // Real buffer npm package (trailing slash required)
         buffer: 'buffer/',
 
-        // Node.js built-in stubs — these don't exist in the browser
-        stream:   path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        // ── Node.js built-in shims ──────────────────────────────────────
+        // `stream` MUST use a real stub with Readable/Writable/Transform.
+        // The empty-stub caused: "can't access property 'prototype',
+        // Ee.Readable is undefined" because ws/concat-stream/keccak all do
+        //   const { Readable } = require('stream');
+        //   Child.prototype = Object.create(Readable.prototype);
+        stream:   path.resolve(__dirname, 'src/lib/stream-stub.ts'),
+
+        // These are genuinely unused in browser paths — empty stubs are safe.
         http:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         https:    path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         url:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         zlib:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         punycode: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        // ws uses Node net/tls/http internals — alias to empty so it falls
+        // back to the browser's native WebSocket (set by @solana/web3.js)
+        net:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        tls:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        dns:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        os:       path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        path:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        fs:       path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        crypto:   path.resolve(__dirname, 'src/lib/empty-stub.ts'),
       },
     },
 
@@ -44,6 +60,7 @@ export default defineConfig(({ mode }) => {
         'react',
         'react-dom',
         'react-router-dom',
+        'zustand',
       ],
       exclude: [
         '@metaplex-foundation/umi',
@@ -52,6 +69,11 @@ export default defineConfig(({ mode }) => {
         '@metaplex-foundation/mpl-candy-machine',
         '@metaplex-foundation/umi-bundle-defaults',
       ],
+      esbuildOptions: {
+        define: {
+          global: 'globalThis',
+        },
+      },
     },
 
     build: {
