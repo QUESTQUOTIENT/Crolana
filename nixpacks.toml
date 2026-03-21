@@ -1,20 +1,19 @@
 # nixpacks.toml — Railway build configuration
 # Forces Node 20 (required by Vite 6, React Router 7, Solana packages)
-# Uses npm install instead of npm ci to tolerate lock file drift
 
 [phases.setup]
-nixPkgs = ["nodejs_20"]
+nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
 
 [phases.install]
 cmds = [
-  "npm install --legacy-peer-deps --no-audit --prefer-offline"
+  "npm install --legacy-peer-deps --no-audit"
 ]
 
 [phases.build]
 cmds = [
-  "npx prisma generate",
+  "npx prisma generate || true",
   "npm run build"
 ]
 
 [start]
-cmd = "npm run start"
+cmd = "node --import tsx/esm server.ts"

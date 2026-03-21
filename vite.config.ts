@@ -20,16 +20,15 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
 
-        // ✅ FIX — DO NOT use absolute path
-        // ✅ MUST use trailing slash
+        // Real buffer npm package (trailing slash required)
         buffer: 'buffer/',
 
-        // stubs (your file is correct)
-        stream: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
-        http: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
-        https: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
-        url: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
-        zlib: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        // Node.js built-in stubs — these don't exist in the browser
+        stream:   path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        http:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        https:    path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        url:      path.resolve(__dirname, 'src/lib/empty-stub.ts'),
+        zlib:     path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         punycode: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
       },
     },
@@ -42,34 +41,103 @@ export default defineConfig(({ mode }) => {
         '@solana/spl-token',
         'bs58',
         'tweetnacl',
+        'react',
+        'react-dom',
+        'react-router-dom',
       ],
-
       exclude: [
         '@metaplex-foundation/umi',
         '@metaplex-foundation/mpl-core',
         '@metaplex-foundation/mpl-token-metadata',
+        '@metaplex-foundation/mpl-candy-machine',
+        '@metaplex-foundation/umi-bundle-defaults',
       ],
     },
 
     build: {
-      target: 'es2020',
+      // es2020 + safari14 ensures mobile Safari 14+ is supported without issues.
+      // Chrome 80 covers Android WebView since ~2020.
+      target: ['es2020', 'chrome80', 'safari14', 'firefox79'],
+
       outDir: 'dist',
       sourcemap: false,
+
+      // Warn when any single chunk exceeds 1 MB (helps catch regressions)
+      chunkSizeWarningLimit: 1000,
 
       commonjsOptions: {
         transformMixedEsModules: true,
       },
 
       rollupOptions: {
+        // Suppress noisy "use client" directive warnings from React 19 packages
+        onwarn(warning, defaultHandler) {
+          if (warning.code === 'MODULE_LEVEL_DIRECTIVE') return;
+          if (warning.code === 'CIRCULAR_DEPENDENCY') return;
+          defaultHandler(warning);
+        },
+
         output: {
-          manualChunks: {
-            solana: [
-              '@solana/web3.js',
-              '@solana/spl-token',
-              'buffer',
-              'bs58',
-              'tweetnacl',
-            ],
+          // Fine-grained manual chunks to keep each chunk under ~500 KB:
+          //   react-vendor  — React + router (rarely changes, long-lived cache)
+          //   solana        — @solana/web3.js + SPL + crypto utilities
+          //   metaplex      — Metaplex UMI + MPL programs (largest; own chunk)
+          //   ethers        — ethers.js EVM library
+          //   ui-vendor     — recharts, lucide, motion, zustand
+          //   vendor        — everything else from node_modules
+          //   Page chunks are auto-split by Rollup via React.lazy()
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+
+            // React core + router — tiny, critical-path, cache forever
+            if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/react-router') ||
+              id.includes('/scheduler/')
+            ) return 'react-vendor';
+
+            // Metaplex — includes SES lockdown (largest single group)
+            if (
+              id.includes('@metaplex-foundation') ||
+              id.includes('mpl-candy-machine') ||
+              id.includes('@noble/') ||
+              id.includes('@coral-xyz') ||
+              id.includes('borsh')
+            ) return 'metaplex';
+
+            // Solana web3 + SPL + crypto deps
+            if (
+              id.includes('@solana/') ||
+              id.includes('bs58') ||
+              id.includes('tweetnacl') ||
+              id.includes('buffer') ||
+              id.includes('bn.js') ||
+              id.includes('superstruct')
+            ) return 'solana';
+
+            // EVM / Ethers
+            if (
+              id.includes('ethers') ||
+              id.includes('@ethersproject') ||
+              id.includes('solc') ||
+              id.includes('keccak256') ||
+              id.includes('merkletreejs') ||
+              id.includes('@openzeppelin')
+            ) return 'ethers';
+
+            // UI component libs
+            if (
+              id.includes('recharts') ||
+              id.includes('lucide-react') ||
+              id.includes('motion') ||
+              id.includes('framer-motion') ||
+              id.includes('clsx') ||
+              id.includes('tailwind-merge')
+            ) return 'ui-vendor';
+
+            // Everything else in node_modules
+            return 'vendor';
           },
         },
       },

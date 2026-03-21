@@ -2,9 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      width=device-width, initial-scale=1 is required for correct mobile layout.
+      shrink-to-fit=no prevents iOS Safari from zooming on input focus.
+      viewport-fit=cover extends to the device safe area on notched iPhones.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no, viewport-fit=cover" />
     <meta name="description" content="Crolana — Professional NFT & DeFi Launchpad for Cronos and Solana" />
     <meta name="theme-color" content="#020817" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
     <!-- Open Graph -->
     <meta property="og:title" content="Crolana" />
@@ -15,51 +23,121 @@
     <link rel="icon" type="image/png" href="/logo.svg" />
     <link rel="apple-touch-icon" href="/logo.svg" />
 
-    <!-- ═══════════════════════════════════════════════════════════════════
-         BUFFER POLYFILL — must run SYNCHRONOUSLY before any ES module.
-         Metaplex's SES lockdown (lockdown-install.js) strips globals from
-         the realm after modules load. Injecting Buffer here — before the
-         <script type="module"> — means it exists on window BEFORE SES runs
-         and SES cannot remove window properties set before lockdown.
-         ═══════════════════════════════════════════════════════════════════ -->
+    <!--
+      ═══════════════════════════════════════════════════════════════════
+      STEP 1 — GLOBAL ERROR HANDLER
+      Must run BEFORE any module script so that if a chunk fails to load
+      (OOM, network error, iOS Safari module parse failure) the user sees
+      a helpful message instead of a permanently blank white screen.
+      ═══════════════════════════════════════════════════════════════════
+    -->
     <script>
-      // Inline minimal Buffer shim so the SES-safe environment has it.
-      // The full 'buffer' npm package is loaded by main.tsx; this just
-      // prevents the "Buffer is not defined" crash during SES lockdown.
-      if (typeof window !== 'undefined' && typeof window.Buffer === 'undefined') {
-        // Minimal Buffer shim — enough for SES lockdown to not crash.
-        // The real implementation from the 'buffer' npm package overwrites
-        // this in polyfills.ts before any Solana code actually runs.
-        window.Buffer = {
-          isBuffer: function() { return false; },
-          from: function(data, enc) {
-            if (typeof data === 'string') {
-              return new TextEncoder().encode(data);
+      (function () {
+        var _appMounted = false;
+
+        function showFallback(msg) {
+          if (_appMounted) return; // React already rendered — don't clobber it
+          var root = document.getElementById('root');
+          if (!root) return;
+          root.innerHTML = [
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;',
+            'background:#020817;padding:1.5rem;font-family:system-ui,sans-serif;">',
+            '<div style="text-align:center;max-width:380px;color:#94a3b8;">',
+            '<div style="font-size:3rem;margin-bottom:1rem">⚠️</div>',
+            '<h2 style="color:#f1f5f9;margin:0 0 .5rem;font-size:1.2rem">Failed to start</h2>',
+            '<p style="font-size:.9rem;margin:0 0 1.5rem">',
+            msg || 'The app could not load. This sometimes happens on slow mobile connections.',
+            '</p>',
+            '<button onclick="location.reload()" ',
+            'style="background:#3b82f6;color:#fff;border:none;border-radius:8px;',
+            'padding:.6rem 1.5rem;font-size:.9rem;cursor:pointer">',
+            'Reload',
+            '</button>',
+            '</div></div>',
+          ].join('');
+        }
+
+        // Mark when React successfully mounts (called from main.tsx)
+        window.__markAppMounted = function () { _appMounted = true; };
+
+        // Catch synchronous JS errors
+        window.onerror = function (msg, src, line, col, err) {
+          console.error('[global onerror]', msg, src, line, col, err);
+          showFallback('A JavaScript error occurred during startup.');
+        };
+
+        // Catch unhandled promise rejections (module load failures come here)
+        window.addEventListener('unhandledrejection', function (e) {
+          var reason = e.reason;
+          var msg = reason && reason.message ? reason.message : String(reason);
+          // Only show fallback for module/chunk load errors, not wallet rejections
+          if (
+            msg.indexOf('Failed to fetch dynamically imported module') !== -1 ||
+            msg.indexOf('error loading dynamically imported module') !== -1 ||
+            msg.indexOf('Importing a module script failed') !== -1
+          ) {
+            e.preventDefault();
+            showFallback('A page module failed to download. Check your connection and reload.');
+          }
+        });
+
+        // Catch script tag load errors (e.g. main chunk 404 on deploy)
+        window.addEventListener('error', function (e) {
+          if (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+            var src = e.target.src || e.target.href || '';
+            // Only show fallback for our own assets
+            if (src.indexOf('/assets/') !== -1) {
+              showFallback('An app asset failed to load. Try refreshing the page.');
             }
+          }
+        }, true /* capture */);
+      })();
+    </script>
+
+    <!--
+      ═══════════════════════════════════════════════════════════════════
+      STEP 2 — BUFFER POLYFILL (synchronous, before ES modules)
+      Metaplex's SES lockdown strips globals added AFTER modules load.
+      This minimal shim runs before any <script type="module"> so it
+      exists on window before SES lockdown runs.
+      The real 'buffer' npm implementation is installed by polyfills.ts.
+      ═══════════════════════════════════════════════════════════════════
+    -->
+    <script>
+      if (typeof window !== 'undefined' && typeof window.Buffer === 'undefined') {
+        window.Buffer = {
+          isBuffer: function () { return false; },
+          from: function (data) {
+            if (typeof data === 'string') return new TextEncoder().encode(data);
             return new Uint8Array(data);
           },
-          alloc: function(size) { return new Uint8Array(size); },
-          allocUnsafe: function(size) { return new Uint8Array(size); },
-          concat: function(list) {
-            var total = list.reduce(function(s, b) { return s + b.length; }, 0);
+          alloc: function (size) { return new Uint8Array(size); },
+          allocUnsafe: function (size) { return new Uint8Array(size); },
+          concat: function (list) {
+            var total = list.reduce(function (s, b) { return s + b.length; }, 0);
             var out = new Uint8Array(total);
             var offset = 0;
-            list.forEach(function(b) { out.set(b, offset); offset += b.length; });
+            list.forEach(function (b) { out.set(b, offset); offset += b.length; });
             return out;
           },
-          byteLength: function(s) { return new TextEncoder().encode(s).length; },
+          byteLength: function (s) { return new TextEncoder().encode(String(s)).length; },
         };
-        // Also set on globalThis so modules using `globalThis.Buffer` find it
         globalThis.Buffer = window.Buffer;
       }
     </script>
 
-    <!-- Prevent FOUC (Flash of Unstyled Content) for dark theme -->
+    <!--
+      ═══════════════════════════════════════════════════════════════════
+      STEP 3 — DARK THEME ANTI-FOUC
+      Apply saved theme CSS variables synchronously so the page renders
+      dark on first paint without a flash of white.
+      ═══════════════════════════════════════════════════════════════════
+    -->
     <script>
       try {
-        const t = JSON.parse(localStorage.getItem('crolana-theme') || '{}');
+        var t = JSON.parse(localStorage.getItem('crolana-theme') || '{}');
         if (t.bgBase) document.documentElement.style.setProperty('--bg-base', t.bgBase);
-      } catch {}
+      } catch (_) {}
       if (!document.documentElement.style.getPropertyValue('--bg-base')) {
         document.documentElement.style.setProperty('--bg-base', '#020817');
       }
