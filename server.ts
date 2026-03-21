@@ -30,7 +30,15 @@ async function startServer() {
   // ── Security headers ────────────────────────────────────────────────────
   try {
     const helmet = (await import('helmet')).default;
-    app.use(helmet({ contentSecurityPolicy: IS_PROD, crossOriginEmbedderPolicy: false }));
+    app.use(helmet({
+      // CSP disabled: helmet's default 'script-src: self' blocks our inline
+      // scripts (Buffer shim + theme anti-FOUC) and Phantom wallet's inpage.js.
+      // Railway handles network-level security. We set permissive connect-src
+      // via the custom directives below instead of the broken default CSP.
+      contentSecurityPolicy: false,
+      // Required for Web3 wallets — they use cross-origin iframes/resources
+      crossOriginEmbedderPolicy: false,
+    }));
   } catch { serverLog.warn('helmet not installed — skipping (run: npm install)'); }
 
   // ── CORS ────────────────────────────────────────────────────────────────

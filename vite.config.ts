@@ -1,32 +1,13 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig, loadEnv, createLogger } from 'vite';
-
-// ─── Clean logger ─────────────────────────────────────────────
-const logger = createLogger();
-const warn = logger.warn;
-
-logger.warn = (msg, opts) => {
-  if (
-    msg.includes('Sourcemap') ||
-    msg.includes('No sources') ||
-    msg.includes('SOURCEMAP_ERROR') ||
-    msg.includes('points to missing source files')
-  ) return;
-  warn(msg, opts);
-};
+import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
 
   return {
-    customLogger: logger,
-
-    plugins: [
-      react(),
-      tailwindcss(),
-    ],
+    plugins: [react(), tailwindcss()],
 
     define: {
       global: 'globalThis',
@@ -34,15 +15,16 @@ export default defineConfig(({ mode }) => {
     },
 
     resolve: {
-      conditions: ['browser', 'import', 'module', 'default'],
+      conditions: ['browser', 'module', 'import'],
 
       alias: {
         '@': path.resolve(__dirname, '.'),
 
-        // ✅ FIXED buffer (IMPORTANT: trailing slash)
+        // ✅ FIX — DO NOT use absolute path
+        // ✅ MUST use trailing slash
         buffer: 'buffer/',
 
-        // ✅ Stub node-only modules
+        // stubs (your file is correct)
         stream: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         http: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
         https: path.resolve(__dirname, 'src/lib/empty-stub.ts'),
@@ -53,27 +35,19 @@ export default defineConfig(({ mode }) => {
     },
 
     optimizeDeps: {
-      exclude: [
-        '@metaplex-foundation/umi',
-        '@metaplex-foundation/umi-bundle-defaults',
-        '@metaplex-foundation/mpl-token-metadata',
-        '@metaplex-foundation/mpl-candy-machine',
-        '@metaplex-foundation/mpl-core',
-      ],
-
       include: [
-        'react',
-        'react-dom',
-        'ethers',
-        'react-router-dom',
-        'zustand',
-
-        // ✅ CRITICAL
         'buffer',
+        'process',
         '@solana/web3.js',
         '@solana/spl-token',
         'bs58',
         'tweetnacl',
+      ],
+
+      exclude: [
+        '@metaplex-foundation/umi',
+        '@metaplex-foundation/mpl-core',
+        '@metaplex-foundation/mpl-token-metadata',
       ],
     },
 
