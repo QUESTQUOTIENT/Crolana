@@ -235,6 +235,10 @@ export type AdvancedContractConfig = {
   royalty: RoyaltySettings;
   advanced: AdvancedControls;
   gas: GasStrategy;
+  // Optional project metadata recorded with deployment
+  projectWebsite?: string;
+  projectTwitter?: string;
+  projectDiscord?: string;
 };
 
 export type ValidationResult = {

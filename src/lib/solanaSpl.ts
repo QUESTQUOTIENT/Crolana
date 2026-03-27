@@ -2,74 +2,22 @@
  * src/lib/solanaSpl.ts
  *
  * SPL Token creation and management for Solana.
+ * Uses @solana/web3.js (browser bundle via vite alias) + @solana/spl-token.
  *
- * KEY FIXES:
+ * All Connection objects route through the Express server RPC proxy at
+ * /api/solana/rpc[/devnet] — avoids CORS and handles RPC rotation server-side.
  *
- * 1. WebSocket "connection refused" (NS_ERROR_WEBSOCKET_CONNECTION_REFUSED)
- *    @solana/web3.js Connection auto-derives wss:// from the HTTP endpoint.
- *    When HTTP is our Railway proxy (/api/solana/rpc), it tries to open
- *    wss://crolana.up.railway.app/api/solana/rpc — which Railway doesn't
- *    proxy → connection refused on every tx.
- *    FIX: Pass explicit wsEndpoint pointing at public Solana WebSocket nodes.
- *    Browser WebSocket → Solana nodes works without CORS restrictions.
- *
- * 2. "block height exceeded" (transaction expired)
- *    Phantom's sign dialog can take 20-60 s. A blockhash is only valid for
- *    ~150 blocks (~60-90 s). If the round-trip takes longer, the tx is rejected.
- *    FIX: Catch the expiry error and retry with a fresh blockhash automatically.
- *
- * 3. Polling confirmation instead of WebSocket subscription
- *    confirmTransaction() uses WebSocket internally. With Railway's proxy the
- *    WebSocket was broken, so confirmations never resolved.
- *    FIX: Poll getSignatureStatus() every 1.5 s over HTTP instead.
+ * Reference: https://solana.com/docs/tokens
  */
 
-// ─── WebSocket endpoints (direct — bypasses proxy, no CORS issues for WS) ────
-const MAINNET_WS = 'wss://api.mainnet-beta.solana.com';
-const DEVNET_WS  = 'wss://api.devnet.solana.com';
-
+// ─── RPC helper ───────────────────────────────────────────────────────────────
+// Always go through the server proxy, never direct to mainnet RPC (CORS-blocked).
 function getRpcProxyUrl(cluster: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   return cluster === 'devnet'
     ? `${origin}/api/solana/rpc/devnet`
     : `${origin}/api/solana/rpc`;
 }
-
-function getWsEndpoint(cluster: string): string {
-  return cluster === 'devnet' ? DEVNET_WS : MAINNET_WS;
-}
-
-// ─── Poll for confirmation (HTTP — no WebSocket subscription) ─────────────────
-async function pollForConfirmation(
-  connection: any,
-  signature: string,
-  lastValidBlockHeight: number,
-  timeoutMs = 90_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 1500));
-    try {
-      const { value } = await connection.getSignatureStatus(signature, {
-        searchTransactionHistory: false,
-      });
-      if (!value) continue;
-      if (value.err) throw new Error('Transaction failed on-chain: ' + JSON.stringify(value.err));
-      const cs = value.confirmationStatus;
-      if (cs === 'confirmed' || cs === 'finalized') return;
-    } catch (e: any) {
-      if (e.message?.includes('Transaction failed')) throw e;
-    }
-    // Stop early if blockhash expired
-    const blockHeight = await connection.getBlockHeight().catch(() => 0);
-    if (blockHeight > lastValidBlockHeight) {
-      throw new Error('block height exceeded — transaction expired before confirmation');
-    }
-  }
-  throw new Error('Transaction confirmation timed out after 90 s');
-}
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface SplTokenConfig {
   name: string;
@@ -81,6 +29,11 @@ export interface SplTokenConfig {
   revokeMintAuthority: boolean;
   revokeFreezeAuthority: boolean;
   cluster?: string;
+  // Project links (stored in token metadata description / deployment record)
+  projectWebsite?: string;
+  projectTwitter?: string;
+  projectDiscord?: string;
+  projectTelegram?: string;
 }
 
 export interface SplTokenResult {
@@ -90,31 +43,55 @@ export interface SplTokenResult {
   explorerUrl: string;
 }
 
-// ─── Create SPL token ─────────────────────────────────────────────────────────
-
 export async function createSplToken(config: SplTokenConfig): Promise<SplTokenResult> {
   const cluster = config.cluster ?? 'mainnet-beta';
   const rpcUrl  = getRpcProxyUrl(cluster);
-  const wsUrl   = getWsEndpoint(cluster);
 
   if (!window.solana?.isPhantom)  throw new Error('Phantom wallet not found. Install from https://phantom.app');
   if (!window.solana.publicKey)   throw new Error('Phantom wallet not connected. Connect first.');
 
+  // Dynamic imports — @solana packages excluded from Vite pre-bundle.
+  // They load on first use (when user clicks "Create Token").
   const web3 = await import('@solana/web3.js');
   const spl  = await import('@solana/spl-token');
 
-  // Fix #1: explicit wsEndpoint so Connection does NOT derive wss://…/api/solana/rpc
-  const connection = new web3.Connection(rpcUrl, {
-    commitment: 'confirmed',
-    wsEndpoint: wsUrl,
-    disableRetryOnRateLimit: false,
-  });
-
+  const connection  = new web3.Connection(rpcUrl, 'confirmed');
   const payerPubkey = new web3.PublicKey(window.solana.publicKey.toBase58());
-  const mintKeypair = web3.Keypair.generate();
-  const mintRent    = await connection.getMinimumBalanceForRentExemption(spl.MINT_SIZE);
 
-  // ATA is deterministic — compute once before any retry loop
+  // Generate a new keypair for the mint account
+  const mintKeypair = web3.Keypair.generate();
+
+  // Minimum SOL needed to make the mint account rent-exempt
+  const mintRent = await connection.getMinimumBalanceForRentExemption(spl.MINT_SIZE);
+
+  const transaction = new web3.Transaction();
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  transaction.recentBlockhash = blockhash;
+  transaction.feePayer        = payerPubkey;
+
+  // Instruction 1 — allocate the mint account
+  transaction.add(
+    web3.SystemProgram.createAccount({
+      fromPubkey:      payerPubkey,
+      newAccountPubkey: mintKeypair.publicKey,
+      space:   spl.MINT_SIZE,
+      lamports: mintRent,
+      programId: spl.TOKEN_PROGRAM_ID,
+    }),
+  );
+
+  // Instruction 2 — initialise the mint
+  transaction.add(
+    spl.createInitializeMintInstruction(
+      mintKeypair.publicKey,
+      config.decimals,
+      payerPubkey,
+      config.revokeFreezeAuthority ? null : payerPubkey,
+      spl.TOKEN_PROGRAM_ID,
+    ),
+  );
+
+  // Instruction 3 — create Associated Token Account for the creator
   const ataAddress = await spl.getAssociatedTokenAddress(
     mintKeypair.publicKey,
     payerPubkey,
@@ -122,96 +99,52 @@ export async function createSplToken(config: SplTokenConfig): Promise<SplTokenRe
     spl.TOKEN_PROGRAM_ID,
     spl.ASSOCIATED_TOKEN_PROGRAM_ID,
   );
+  transaction.add(
+    spl.createAssociatedTokenAccountInstruction(
+      payerPubkey, ataAddress, payerPubkey, mintKeypair.publicKey,
+    ),
+  );
 
+  // Instruction 4 — mint initial supply to creator's ATA
   const supplyRaw = BigInt(
     Math.floor(parseFloat(config.initialSupply) * 10 ** config.decimals).toString(),
   );
+  transaction.add(
+    spl.createMintToInstruction(
+      mintKeypair.publicKey, ataAddress, payerPubkey, supplyRaw,
+    ),
+  );
 
-  // Fix #2: retry loop — if blockhash expires during Phantom sign, get a fresh one
-  let signature = '';
-  let lastErr: any;
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    try {
-      // Get blockhash as late as possible (right before building tx)
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-
-      const tx = new web3.Transaction();
-      tx.recentBlockhash = blockhash;
-      tx.feePayer        = payerPubkey;
-
-      tx.add(web3.SystemProgram.createAccount({
-        fromPubkey:       payerPubkey,
-        newAccountPubkey: mintKeypair.publicKey,
-        space:            spl.MINT_SIZE,
-        lamports:         mintRent,
-        programId:        spl.TOKEN_PROGRAM_ID,
-      }));
-
-      tx.add(spl.createInitializeMintInstruction(
+  // Instruction 5 (optional) — revoke mint authority → fixed supply
+  if (config.revokeMintAuthority) {
+    transaction.add(
+      spl.createSetAuthorityInstruction(
         mintKeypair.publicKey,
-        config.decimals,
         payerPubkey,
-        config.revokeFreezeAuthority ? null : payerPubkey,
-        spl.TOKEN_PROGRAM_ID,
-      ));
-
-      tx.add(spl.createAssociatedTokenAccountInstruction(
-        payerPubkey, ataAddress, payerPubkey, mintKeypair.publicKey,
-      ));
-
-      tx.add(spl.createMintToInstruction(
-        mintKeypair.publicKey, ataAddress, payerPubkey, supplyRaw,
-      ));
-
-      if (config.revokeMintAuthority) {
-        tx.add(spl.createSetAuthorityInstruction(
-          mintKeypair.publicKey,
-          payerPubkey,
-          spl.AuthorityType.MintTokens,
-          null,
-        ));
-      }
-
-      // Mint keypair must co-sign (authorises its own account creation)
-      tx.partialSign(mintKeypair);
-
-      // Payer signature via Phantom
-      const signedTx = await window.solana!.signTransaction(tx);
-
-      signature = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: 3,
-      });
-
-      // Fix #3: poll instead of WebSocket subscription
-      await pollForConfirmation(connection, signature, lastValidBlockHeight);
-      break; // success — exit retry loop
-    } catch (err: any) {
-      lastErr = err;
-      const msg = err?.message ?? '';
-      const isExpiry = msg.includes('block height exceeded') || msg.includes('Blockhash not found');
-      if (isExpiry && attempt < 2) {
-        console.warn(`[solanaSpl] Blockhash expired (attempt ${attempt + 1}), retrying with fresh blockhash…`);
-        await new Promise(r => setTimeout(r, 500));
-        continue;
-      }
-      throw err;
-    }
+        spl.AuthorityType.MintTokens,
+        null,
+      ),
+    );
   }
 
-  if (!signature) throw lastErr ?? new Error('Token creation failed after retries');
+  // The mint keypair must co-sign (it authorises its own account creation)
+  transaction.partialSign(mintKeypair);
+
+  // Phantom adds the payer signature
+  const signedTx  = await window.solana.signTransaction(transaction);
+  const signature = await connection.sendRawTransaction(signedTx.serialize());
+  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
 
   const clusterParam = cluster === 'devnet' ? '?cluster=devnet' : '';
   return {
-    mintAddress:            mintKeypair.publicKey.toBase58(),
-    txSignature:            signature,
+    mintAddress: mintKeypair.publicKey.toBase58(),
+    txSignature: signature,
     associatedTokenAccount: ataAddress.toBase58(),
     explorerUrl: `https://solscan.io/address/${mintKeypair.publicKey.toBase58()}${clusterParam}`,
   };
 }
 
-// ─── Airdrop SPL tokens ───────────────────────────────────────────────────────
+// ─── Airdrop SPL tokens to multiple addresses ─────────────────────────────────
 
 export interface AirdropEntry { address: string; amount: string; }
 
@@ -223,7 +156,6 @@ export async function airdropSplTokens(params: {
 }): Promise<string[]> {
   const { mintAddress, decimals, recipients, cluster = 'mainnet-beta' } = params;
   const rpcUrl = getRpcProxyUrl(cluster);
-  const wsUrl  = getWsEndpoint(cluster);
 
   if (!window.solana?.isPhantom || !window.solana.publicKey) {
     throw new Error('Phantom wallet not connected.');
@@ -232,64 +164,37 @@ export async function airdropSplTokens(params: {
   const web3 = await import('@solana/web3.js');
   const spl  = await import('@solana/spl-token');
 
-  const connection  = new web3.Connection(rpcUrl, {
-    commitment: 'confirmed',
-    wsEndpoint: wsUrl,
-    disableRetryOnRateLimit: false,
-  });
-
+  const connection  = new web3.Connection(rpcUrl, 'confirmed');
   const payerPubkey = new web3.PublicKey(window.solana.publicKey.toBase58());
   const mintPubkey  = new web3.PublicKey(mintAddress);
   const senderAta   = await spl.getAssociatedTokenAddress(mintPubkey, payerPubkey);
   const signatures: string[] = [];
 
-  const BATCH = 5; // Smaller batch → shorter tx → faster confirmation
+  const BATCH = 10;
   for (let i = 0; i < recipients.length; i += BATCH) {
     const batch = recipients.slice(i, i + BATCH);
-    let batchSig = '';
-    let lastErr: any;
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const tx = new web3.Transaction();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer        = payerPubkey;
 
-    for (let attempt = 0; attempt <= 2; attempt++) {
-      try {
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-        const tx = new web3.Transaction();
-        tx.recentBlockhash = blockhash;
-        tx.feePayer        = payerPubkey;
-
-        for (const recipient of batch) {
-          const destPubkey = new web3.PublicKey(recipient.address);
-          const destAta    = await spl.getAssociatedTokenAddress(mintPubkey, destPubkey);
-          const ataInfo    = await connection.getAccountInfo(destAta);
-          if (!ataInfo) {
-            tx.add(spl.createAssociatedTokenAccountInstruction(
-              payerPubkey, destAta, destPubkey, mintPubkey,
-            ));
-          }
-          const rawAmount = BigInt(Math.floor(parseFloat(recipient.amount) * 10 ** decimals));
-          tx.add(spl.createTransferInstruction(senderAta, destAta, payerPubkey, rawAmount));
-        }
-
-        const signed = await window.solana!.signTransaction(tx);
-        const sig    = await connection.sendRawTransaction(signed.serialize(), {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-          maxRetries: 3,
-        });
-        await pollForConfirmation(connection, sig, lastValidBlockHeight);
-        batchSig = sig;
-        break;
-      } catch (err: any) {
-        lastErr = err;
-        const msg = err?.message ?? '';
-        if ((msg.includes('block height exceeded') || msg.includes('Blockhash not found')) && attempt < 2) {
-          console.warn(`[solanaSpl] Airdrop batch expiry (attempt ${attempt + 1}), retrying…`);
-          await new Promise(r => setTimeout(r, 500));
-          continue;
-        }
-        throw err;
+    for (const recipient of batch) {
+      const destPubkey = new web3.PublicKey(recipient.address);
+      const destAta    = await spl.getAssociatedTokenAddress(mintPubkey, destPubkey);
+      const ataInfo    = await connection.getAccountInfo(destAta);
+      if (!ataInfo) {
+        tx.add(spl.createAssociatedTokenAccountInstruction(
+          payerPubkey, destAta, destPubkey, mintPubkey,
+        ));
       }
+      const rawAmount = BigInt(Math.floor(parseFloat(recipient.amount) * 10 ** decimals));
+      tx.add(spl.createTransferInstruction(senderAta, destAta, payerPubkey, rawAmount));
     }
-    signatures.push(batchSig);
+
+    const signed = await window.solana.signTransaction(tx);
+    const sig    = await connection.sendRawTransaction(signed.serialize());
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    signatures.push(sig);
   }
   return signatures;
 }
@@ -298,20 +203,15 @@ export async function airdropSplTokens(params: {
 
 export async function getSplMintInfo(mintAddress: string, cluster = 'mainnet-beta') {
   const rpcUrl = getRpcProxyUrl(cluster);
-  const wsUrl  = getWsEndpoint(cluster);
-  const web3   = await import('@solana/web3.js');
-  const spl    = await import('@solana/spl-token');
-  const connection = new web3.Connection(rpcUrl, {
-    commitment: 'confirmed',
-    wsEndpoint: wsUrl,
-    disableRetryOnRateLimit: false,
-  });
+  const web3 = await import('@solana/web3.js');
+  const spl  = await import('@solana/spl-token');
+  const connection = new web3.Connection(rpcUrl, 'confirmed');
   const mint = await spl.getMint(connection, new web3.PublicKey(mintAddress));
   return {
-    decimals:        mint.decimals,
-    supply:          mint.supply.toString(),
-    mintAuthority:   mint.mintAuthority?.toBase58()   ?? null,
+    decimals:       mint.decimals,
+    supply:         mint.supply.toString(),
+    mintAuthority:  mint.mintAuthority?.toBase58()  ?? null,
     freezeAuthority: mint.freezeAuthority?.toBase58() ?? null,
-    isInitialized:   mint.isInitialized,
+    isInitialized:  mint.isInitialized,
   };
 }

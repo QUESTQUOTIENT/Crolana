@@ -296,53 +296,24 @@ export function LiquidityManager() {
   const fetchPairInfo = useCallback(async () => {
     setIsFetching(true); setPairInfo(null); setError(null);
     try {
-      const prov = getDexProvider(network.chainId);
-      const addrA = isNativeCRO(tokenA.address) ? wcro : tokenA.address;
-      const addrB = isNativeCRO(tokenB.address) ? wcro : tokenB.address;
-
-      // ── Try direct on-chain first (most reliable) ─────────────────────────
-      let info: typeof pairInfo = null;
-      try {
-        const factory = new ethers.Contract(routerConfig.factory, FACTORY_ABI, prov);
-        const pairAddress: string = await factory.getPair(addrA, addrB);
-        if (pairAddress && pairAddress !== ethers.ZeroAddress) {
-          const pair = new ethers.Contract(pairAddress, PAIR_ABI, prov);
-          const [reserves, token0, totalSupply] = await Promise.all([
-            pair.getReserves(), pair.token0(), pair.totalSupply(),
-          ]);
-          info = {
-            pairAddress,
-            token0: (token0 as string).toLowerCase(),
-            token1: addrA.toLowerCase() === (token0 as string).toLowerCase() ? addrB.toLowerCase() : addrA.toLowerCase(),
-            reserve0: reserves[0] as bigint,
-            reserve1: reserves[1] as bigint,
-            totalSupply: totalSupply as bigint,
-          };
-        }
-      } catch {
-        // Fall back to API if direct call fails
-        try {
-          const params = new URLSearchParams({
-            tokenA: tokenA.address, tokenB: tokenB.address, chainId: String(network.chainId),
-          });
-          const res  = await fetch(`/api/pool/info?${params}`);
-          const data = await res.json();
-          if (res.ok && data.exists) {
-            info = {
-              pairAddress: data.pairAddress as string,
-              token0:      data.token0 as string,
-              token1:      data.token1 as string,
-              reserve0:    BigInt(data.reserve0),
-              reserve1:    BigInt(data.reserve1),
-              totalSupply: BigInt(data.totalSupply),
-            };
-          }
-        } catch { /* pool may not exist yet */ }
-      }
-
-      if (!info) { setIsFetching(false); return; }
+      const params = new URLSearchParams({
+        tokenA:  tokenA.address, tokenB: tokenB.address, chainId: String(network.chainId),
+      });
+      const res  = await fetch(`/api/pool/info?${params}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      if (!data.exists) { setIsFetching(false); return; }
+      const info = {
+        pairAddress: data.pairAddress as string,
+        token0:      data.token0 as string,
+        token1:      data.token1 as string,
+        reserve0:    BigInt(data.reserve0),
+        reserve1:    BigInt(data.reserve1),
+        totalSupply: BigInt(data.totalSupply),
+      };
       setPairInfo(info);
       if (walletAddress && window.ethereum) {
+        const prov = getDexProvider(network.chainId);
         const pair = new ethers.Contract(info.pairAddress, PAIR_ABI, prov);
         const lpBal: bigint = await pair.balanceOf(walletAddress);
         const lpStr = formatAmount(lpBal, 18, 8);
@@ -351,7 +322,7 @@ export function LiquidityManager() {
       }
     } catch { /* no-op — pool may not exist */ }
     finally { setIsFetching(false); }
-  }, [tokenA, tokenB, network.chainId, walletAddress, removePercent, routerConfig.factory, wcro]);
+  }, [tokenA, tokenB, network.chainId, walletAddress, removePercent]);
 
   useEffect(() => { fetchPairInfo(); fetchBalances(); }, [tokenA, tokenB]);
   useEffect(() => { fetchBalances(); }, [walletAddress]);
@@ -381,64 +352,58 @@ export function LiquidityManager() {
   }, [removePercent, pairInfo, walletAddress]);
 
   // ── Scan positions for "Positions" tab ──────────────────────────────────────
+  // Queries VVS factory + LP balances directly via frontend RPC — bypasses the
+  // /api/pool/info backend route which was frequently timing out (503) causing
+  // all positions to silently show as "not found".
   const scanPositions = useCallback(async () => {
     if (!walletAddress || !window.ethereum) return;
     setPosFetching(true);
     const found: PositionData[] = [];
-    const list = getTokenList(network.chainId);
+    const list  = getTokenList(network.chainId);
+    const prov  = getDexProvider(network.chainId);
+    const wcro  = getWCROAddress(network.chainId);
+    const factory = new ethers.Contract(routerConfig.factory, FACTORY_ABI, prov);
     try {
-      const prov = getDexProvider(network.chainId);
-      const factory = new ethers.Contract(routerConfig.factory, FACTORY_ABI, prov);
-
-      // Check all unique token pairs from the token list
       const pairs: [Token, Token][] = [];
-      for (let i = 0; i < list.length; i++) {
-        for (let j = i + 1; j < list.length; j++) {
+      for (let i = 0; i < list.length; i++)
+        for (let j = i + 1; j < list.length; j++)
           pairs.push([list[i], list[j]]);
-        }
-      }
 
-      // Direct on-chain scan — no server round-trip that can fail silently
+      // Query factory.getPair() and LP balance in parallel for every combination
       const results = await Promise.allSettled(
         pairs.map(async ([tA, tB]) => {
-          try {
-            const addrA = isNativeCRO(tA.address) ? wcro : tA.address;
-            const addrB = isNativeCRO(tB.address) ? wcro : tB.address;
-            const pairAddress: string = await factory.getPair(addrA, addrB);
-            if (!pairAddress || pairAddress === ethers.ZeroAddress) return null;
-
-            const pair = new ethers.Contract(pairAddress, PAIR_ABI, prov);
-            const [lpBal, totalSupply, reserves, token0] = await Promise.all([
+          const addrA = tA.isNative ? wcro : tA.address;
+          const addrB = tB.isNative ? wcro : tB.address;
+          const pairAddr: string = await factory.getPair(addrA, addrB);
+          if (!pairAddr || pairAddr === ethers.ZeroAddress) return null;
+          const pair = new ethers.Contract(pairAddr, PAIR_ABI, prov);
+          const [lpBal, reserves, token0, totalSupply]: [bigint, any, string, bigint] =
+            await Promise.all([
               pair.balanceOf(walletAddress),
-              pair.totalSupply(),
               pair.getReserves(),
               pair.token0(),
+              pair.totalSupply(),
             ]);
-            if ((lpBal as bigint) === 0n) return null;
-
-            return {
-              pairAddress,
-              tokenA: tA, tokenB: tB,
-              lpBalance: formatAmount(lpBal as bigint, 18, 8),
-              reserve0:  reserves[0] as bigint,
-              reserve1:  reserves[1] as bigint,
-              totalSupply: totalSupply as bigint,
-              token0: (token0 as string).toLowerCase(),
-            } as PositionData;
-          } catch {
-            return null; // pair does not exist or RPC error — skip silently
-          }
+          if (lpBal === 0n) return null;
+          return {
+            pairAddress: pairAddr,
+            tokenA: tA, tokenB: tB,
+            lpBalance:   formatAmount(lpBal, 18, 8),
+            reserve0:    reserves[0] as bigint,
+            reserve1:    reserves[1] as bigint,
+            totalSupply: totalSupply,
+            token0:      (token0 as string).toLowerCase(),
+          } as PositionData;
         })
       );
-      for (const r of results) {
+      for (const r of results)
         if (r.status === 'fulfilled' && r.value) found.push(r.value);
-      }
-    } catch (err: any) {
-      console.warn('[LiquidityManager] scanPositions error:', err?.message);
+    } catch (e) {
+      console.warn('[LiquidityManager] scanPositions error:', e);
     }
     setPositions(found);
     setPosFetching(false);
-  }, [walletAddress, network.chainId, routerConfig.factory, wcro]);
+  }, [walletAddress, network.chainId, routerConfig.factory]);
 
   useEffect(() => {
     if (tab === 'positions') scanPositions();
@@ -522,26 +487,13 @@ export function LiquidityManager() {
       if (Number(net.chainId) !== network.chainId)
         throw new Error(`Switch to ${network.name} in your wallet.`);
 
-      // Fetch latest pair info directly from chain (most reliable, no server round-trip)
+      // Fetch latest pair info directly (don't rely on cached pairInfo which may be stale)
       const readProvider = getDexProvider(network.chainId);
-      const factory = new ethers.Contract(routerConfig.factory, FACTORY_ABI, readProvider);
-      const addrA = isNativeCRO(tokenA.address) ? wcro : tokenA.address;
-      const addrB = isNativeCRO(tokenB.address) ? wcro : tokenB.address;
-      const currentPairAddress: string = await factory.getPair(addrA, addrB);
-      if (!currentPairAddress || currentPairAddress === ethers.ZeroAddress)
-        throw new Error('Pool not found — add liquidity to this pair first.');
-      const pairContract = new ethers.Contract(currentPairAddress, PAIR_ABI, readProvider);
-      const [infoReserves, infoTotalSupply, infoToken0] = await Promise.all([
-        pairContract.getReserves(), pairContract.totalSupply(), pairContract.token0(),
-      ]);
-      const infoData = {
-        exists: true,
-        pairAddress: currentPairAddress,
-        reserve0: infoReserves[0].toString(),
-        reserve1: infoReserves[1].toString(),
-        totalSupply: infoTotalSupply.toString(),
-        token0: (infoToken0 as string).toLowerCase(),
-      };
+      const params = new URLSearchParams({ tokenA: tokenA.address, tokenB: tokenB.address, chainId: String(network.chainId) });
+      const infoRes = await fetch(`/api/pool/info?${params}`);
+      const infoData = infoRes.ok ? await infoRes.json() : null;
+      if (!infoData?.exists) throw new Error('Pool not found — try refreshing the page.');
+      const currentPairAddress = infoData.pairAddress as string;
 
       const router = new ethers.Contract(routerConfig.router, ROUTER_ABI, signer);
       const lpBn   = parseAmount(lpAmt, 18);

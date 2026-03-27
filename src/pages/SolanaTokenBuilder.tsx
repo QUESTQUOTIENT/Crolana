@@ -200,7 +200,30 @@ export function SolanaTokenBuilder() {
 
             <AuthorityToggle
               icon={Lock} label="Revoke Mint Authority"
-              description="Permanently fix the token supply. No additional tokens can ever be minted. Recommended for trustless launches."
+              {/* Project Social Links */}
+              <div className="space-y-3 border-t border-slate-800 pt-4 mt-2">
+                <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Project Links (optional)</p>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Website URL</label>
+                  <input type="text" value={config.projectWebsite ?? ''} onChange={e => update({ projectWebsite: e.target.value })}
+                    placeholder="https://yourproject.xyz"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-purple-500 outline-none" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Twitter / X</label>
+                    <input type="text" value={config.projectTwitter ?? ''} onChange={e => update({ projectTwitter: e.target.value })}
+                      placeholder="https://x.com/..." className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-purple-500 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Discord</label>
+                    <input type="text" value={config.projectDiscord ?? ''} onChange={e => update({ projectDiscord: e.target.value })}
+                      placeholder="https://discord.gg/..." className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-purple-500 outline-none" />
+                  </div>
+                </div>
+              </div>
+
+                            description="Permanently fix the token supply. No additional tokens can ever be minted. Recommended for trustless launches."
               enabled={config.revokeMintAuthority} onChange={v => update({ revokeMintAuthority: v })} warningColor="green" />
 
             <AuthorityToggle

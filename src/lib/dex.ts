@@ -210,13 +210,11 @@ export async function getSwapQuote(
 
 /**
  * Multi-router best-quote: queries all available routers in parallel and returns
- * the best output amount. Queries all known routers in parallel; highest amountOut wins.
+ * the best output amount. Only active when VITE_ENABLE_MULTI_ROUTER=true.
  *
  * Routers on Cronos Mainnet (chain 25):
- *   VVS Finance  — 0x145863Eb42Cf62847A6Ca784e6416C1682b1b2Ae  (Uniswap V2 fork, largest TVL)
- *   MM Finance   — 0x145677FC4d9b8F19B5D56d1820c48e0443049a30  (trade-mining rewards)
- *   CronaSwap    — 0xcd7d16fB918511BF7269eC4f48d61D79Fb26f918  (0.25% swap fee)
- *   Ferro        — 0x5f0eA30Ef51d7a7EEeE07ffd2Ba5AaC5EFb93786  (stable swap, low slippage)
+ *   VVS Finance  — 0x145863Eb42Cf62847A6Ca784e6416C1682b1b2Ae
+ *   MM Finance   — 0x145677FC4d9b8F19B5D56d1820c48e0443049a30
  */
 export interface MultiRouterQuote {
   amounts:    bigint[];
@@ -225,13 +223,14 @@ export interface MultiRouterQuote {
   amountOut:  bigint;
 }
 
-// All known Uniswap-V2-compatible routers on Cronos mainnet
-const MULTI_ROUTERS_MAINNET: readonly { address: string; name: string }[] = [
-  { address: '0x145863Eb42Cf62847A6Ca784e6416C1682b1b2Ae', name: 'VVS Finance'  },
-  { address: '0x145677FC4d9b8F19B5D56d1820c48e0443049a30', name: 'MM Finance'   },
-  { address: '0xcd7d16fB918511BF7269eC4f48d61D79Fb26f918', name: 'CronaSwap'    },
-  { address: '0x5f0eA30Ef51d7a7EEeE07ffd2Ba5AaC5EFb93786', name: 'Ferro'        },
-];
+// All Uniswap V2-compatible DEX routers on Cronos Mainnet (chain 25).
+// Only V2-forks can be queried with getAmountsOut() — Ferro (stable) and
+// Fulcrom (perp) use different interfaces and are not included here.
+const MULTI_ROUTERS_MAINNET = [
+  { address: '0x145863Eb42Cf62847A6Ca784e6416C1682b1b2Ae', name: 'VVS Finance' },
+  { address: '0x145677FC4d9b8F19B5D56d1820c48e0443049a30', name: 'MM Finance'  },
+  { address: '0xcd7d16fB918511BF7269eC4f48d61D79Fb26f918', name: 'CronaSwap'   },
+] as const;
 
 export async function getBestRouterQuote(
   chainId:  number,
@@ -239,10 +238,12 @@ export async function getBestRouterQuote(
   path:     string[],
   provider: ethers.JsonRpcProvider | ethers.BrowserProvider,
 ): Promise<MultiRouterQuote> {
-  // Always query all available routers on mainnet for best price
-  const routers = chainId === 25
+  const MULTI_ENABLED = typeof import.meta !== 'undefined' &&
+    (import.meta as any).env?.VITE_ENABLE_MULTI_ROUTER === 'true';
+
+  const routers = (chainId === 25 && MULTI_ENABLED)
     ? MULTI_ROUTERS_MAINNET
-    : [MULTI_ROUTERS_MAINNET[0]]; // VVS only on testnet
+    : [MULTI_ROUTERS_MAINNET[0]]; // VVS only when flag off
 
   const results = await Promise.allSettled(
     routers.map(async (r) => {

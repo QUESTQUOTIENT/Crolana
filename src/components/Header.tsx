@@ -14,7 +14,7 @@ import { getReadProvider } from '../lib/provider';
 import { getSolBalance, formatSol, disconnectPhantom } from '../lib/solana';
 import {
   Wallet, ChevronDown, Network, LogOut, Copy, ExternalLink,
-  CheckCircle, RefreshCw, Loader2, Zap, Menu,
+  CheckCircle, RefreshCw, Loader2, Zap,
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { CRONOS_MAINNET, CRONOS_TESTNET, SOLANA_MAINNET, SOLANA_DEVNET, isSolanaNetwork } from '../types';
@@ -203,21 +203,10 @@ export function Header() {
   return (
     <>
       <header
-        className="h-16 bg-slate-900/95 backdrop-blur border-b border-slate-800 flex items-center justify-between px-3 sm:px-6 fixed top-0 right-0 z-50"
+        className="h-16 bg-slate-900/95 backdrop-blur border-b border-slate-800 flex items-center justify-between px-3 sm:px-6 fixed top-0 right-0 z-40"
         style={{ left: 'var(--sidebar-width, 16rem)', transition: 'left 0.3s' }}
       >
         <div className="flex items-center gap-3">
-          {/* Mobile hamburger — only visible when sidebar is hidden (mobile) */}
-          <button
-            className="md:hidden p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-            onClick={() => {
-              // Dispatch a custom event the Sidebar listens to
-              window.dispatchEvent(new CustomEvent('toggle-sidebar'));
-            }}
-            aria-label="Open menu"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
           <div className={`w-2 h-2 rounded-full ${activeDot}`} />
           <span className="text-slate-300 text-sm font-medium">{network.name}</span>
           {isSolana

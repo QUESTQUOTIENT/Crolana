@@ -138,28 +138,18 @@ export async function signAndSendSolanaSwap(params: {
 
   // All Solana JSON-RPC calls go through the server proxy (avoids CORS + rotates RPCs)
   const rpcUrl    = getRpcProxyUrl(cluster);
-  // Fix: explicit wsEndpoint so Connection does NOT derive wss://…/api/solana/rpc
-  const wsUrl = cluster === 'devnet' ? 'wss://api.devnet.solana.com' : 'wss://api.mainnet-beta.solana.com';
-  const connection = new web3.Connection(rpcUrl, {
-    commitment: 'confirmed',
-    wsEndpoint: wsUrl,
-    disableRetryOnRateLimit: false,
-  });
+  const connection = new web3.Connection(rpcUrl, 'confirmed');
 
   // signAndSendTransaction is the correct Phantom API for VersionedTransaction
+  // (sendTransaction is only for legacy Transaction objects)
   const { signature } = await window.solana.signAndSendTransaction(transaction);
 
-  // Poll for confirmation (HTTP) instead of WebSocket subscription
-  const { lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  let confirmed = false;
-  const deadline = Date.now() + 90_000;
-  while (!confirmed && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 1500));
-    const { value } = await connection.getSignatureStatus(signature, { searchTransactionHistory: false });
-    if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') confirmed = true;
-    if (value?.err) throw new Error('Swap transaction failed: ' + JSON.stringify(value.err));
-  }
-  if (!confirmed) throw new Error('Jupiter swap confirmation timed out');
+  // Poll for confirmation — up to ~90s (lastValidBlockHeight window)
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  await connection.confirmTransaction(
+    { signature, blockhash, lastValidBlockHeight },
+    'confirmed',
+  );
 
   return signature;
 }

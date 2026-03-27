@@ -220,32 +220,18 @@ export async function addRaydiumLiquidity(params: {
   const web3 = await import('@solana/web3.js');
   // Use server-side RPC proxy to avoid CORS and direct endpoint rate limits
   const rpcProxy = `${window.location.origin}/api/solana/rpc`;
-  // Fix: explicit wsEndpoint prevents Connection deriving wss://…/api/solana/rpc
-  const connection = new web3.Connection(rpcProxy, {
-    commitment: 'confirmed',
-    wsEndpoint: 'wss://api.mainnet-beta.solana.com',
-    disableRetryOnRateLimit: false,
-  });
+  const connection = new web3.Connection(rpcProxy, 'confirmed');
   let lastSig = '';
 
   for (const txItem of txList) {
     const txBase64 = typeof txItem === 'string' ? txItem : (txItem.transaction ?? txItem.id);
     const txBuf  = Buffer.from(txBase64, 'base64');
     const tx     = web3.VersionedTransaction.deserialize(txBuf);
-    // Refresh blockhash right before sending to minimise expiry risk
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    // Refresh blockhash so the tx doesn't expire before confirmation
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     tx.message.recentBlockhash = blockhash;
     const { signature } = await window.solana.signAndSendTransaction(tx);
-    // Poll for confirmation instead of WebSocket subscription
-    let confirmed = false;
-    const deadline = Date.now() + 90_000;
-    while (!confirmed && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 1500));
-      const { value } = await connection.getSignatureStatus(signature, { searchTransactionHistory: false });
-      if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') confirmed = true;
-      if (value?.err) throw new Error('Transaction failed: ' + JSON.stringify(value.err));
-    }
-    if (!confirmed) throw new Error('Raydium tx confirmation timed out');
+    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
     lastSig = signature;
   }
 
@@ -286,31 +272,17 @@ export async function removeRaydiumLiquidity(params: {
 
   const web3 = await import('@solana/web3.js');
   const rpcProxy = `${window.location.origin}/api/solana/rpc`;
-  // Fix: explicit wsEndpoint prevents Connection deriving wss://…/api/solana/rpc
-  const connection = new web3.Connection(rpcProxy, {
-    commitment: 'confirmed',
-    wsEndpoint: 'wss://api.mainnet-beta.solana.com',
-    disableRetryOnRateLimit: false,
-  });
+  const connection = new web3.Connection(rpcProxy, 'confirmed');
   let lastSig = '';
 
   for (const txItem of txList) {
     const txBase64 = typeof txItem === 'string' ? txItem : (txItem.transaction ?? txItem.id);
     const txBuf  = Buffer.from(txBase64, 'base64');
     const tx     = web3.VersionedTransaction.deserialize(txBuf);
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     tx.message.recentBlockhash = blockhash;
     const { signature } = await window.solana.signAndSendTransaction(tx);
-    // Poll for confirmation instead of WebSocket subscription
-    let confirmed = false;
-    const deadline = Date.now() + 90_000;
-    while (!confirmed && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 1500));
-      const { value } = await connection.getSignatureStatus(signature, { searchTransactionHistory: false });
-      if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') confirmed = true;
-      if (value?.err) throw new Error('Transaction failed: ' + JSON.stringify(value.err));
-    }
-    if (!confirmed) throw new Error('Raydium tx confirmation timed out');
+    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
     lastSig = signature;
   }
 

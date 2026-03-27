@@ -169,7 +169,7 @@ export const getPinStatus = async (req: Request, res: Response) => {
 
     if (!cid) return res.status(400).json({ error: 'CID is required' });
 
-    const provider = await getProviderFromConfig(userId);
+    const provider = getProviderFromConfig(userId);
     const status = await provider.getPinStatus(cid);
     res.json(status);
   } catch (error: any) {
@@ -184,7 +184,7 @@ export const uploadHiddenImage = async (req: Request, res: Response) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const provider = await getProviderFromConfig(userId);
+    const provider = getProviderFromConfig(userId);
     const result = await provider.uploadFile(file);
 
     const config = await db.getConfig(userId);
@@ -218,7 +218,7 @@ export const uploadHiddenMetadata = async (req: Request, res: Response) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const provider = await getProviderFromConfig(userId);
+    const provider = getProviderFromConfig(userId);
     const result = await provider.uploadFile(file);
 
     const config = await db.getConfig(userId);
@@ -296,7 +296,7 @@ export const storageUploadAsset = async (req: Request, res: Response) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const provider = await getProviderFromConfig(userId);
+    const provider = getProviderFromConfig(userId);
     const result = await provider.uploadFile(file);
 
     const config = await db.getConfig(userId);
@@ -336,7 +336,6 @@ export const storageUploadMetadata = async (req: Request, res: Response) => {
     if (!files || files.length === 0) return res.status(400).json({ error: 'No metadata files uploaded' });
 
     // Use the job queue for collections (same as /ipfs/upload/metadata)
-    const { uploadQueue } = await import('../services/uploadQueue.js');
     const jobId = uploadQueue.addJob(userId, 'metadata', files);
     res.status(202).json({
       jobId,
@@ -355,7 +354,6 @@ export const storageGetCID = async (req: Request, res: Response) => {
     const { jobId } = req.params;
     if (!jobId) return res.status(400).json({ error: 'jobId is required' });
 
-    const { uploadQueue } = await import('../services/uploadQueue.js');
     const job = uploadQueue.getJob(jobId);
     if (!job) return res.status(404).json({ error: 'Job not found' });
 

@@ -119,29 +119,17 @@ function NavGroup({
 }
 
 export function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(
+  const isMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
+  const [collapsed, setCollapsed] = useState(
     typeof window !== 'undefined' && window.innerWidth < 768
   );
-
+  // sidebarWidth = actual pixel width of the sidebar element.
+  // On mobile collapsed: 0rem (fully off screen). On desktop collapsed: 4rem (icon bar).
+  const getSidebarWidth = (col: boolean) => col ? (isMobile() ? '0rem' : '4rem') : '16rem';
   useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < 768;
-      setIsMobile(mobile);
-      document.documentElement.style.setProperty('--sidebar-width', mobile ? '0rem' : (collapsed ? '4rem' : '16rem'));
-      if (mobile) setCollapsed(false);
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, [collapsed]);
-
-  // Listen for hamburger toggle from Header
-  useEffect(() => {
-    const handler = () => setMobileOpen(prev => !prev);
-    window.addEventListener('toggle-sidebar', handler);
-    return () => window.removeEventListener('toggle-sidebar', handler);
+    const col = isMobile();
+    document.documentElement.style.setProperty('--sidebar-width', getSidebarWidth(col));
+    setCollapsed(col);
   }, []);
 
   const { network, walletAddress, solanaWalletAddress } = useAppStore();
@@ -155,22 +143,11 @@ export function Sidebar() {
   const defiItems: NavItem[] = isSolana ? DEFI_SOLANA : DEFI_EVM;
   const defiLabel = isSolana ? '◎ Solana DeFi' : 'DeFi Tools';
 
-  // On mobile, when sidebar is open show full nav (not collapsed icon mode)
-  const navCollapsed = isMobile ? false : collapsed;
-
   return (
-    <>
-      {/* Mobile overlay backdrop */}
-      {isMobile && mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 z-30 md:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
     <div
-      className={`fixed left-0 top-0 h-full border-r border-slate-800 flex flex-col z-40 transition-all duration-300 overflow-hidden`}
+      className="fixed left-0 top-0 h-full border-r border-slate-800 flex flex-col z-40 transition-all duration-300 overflow-hidden"
       style={{
-        width: isMobile ? (mobileOpen ? '16rem' : '0rem') : (collapsed ? '4rem' : '16rem'),
+        width: getSidebarWidth(collapsed),
         background: 'var(--bg-sidebar, #0b1120)',
       }}
     >
@@ -184,7 +161,7 @@ export function Sidebar() {
             (e.target as HTMLImageElement).style.display = 'none';
           }}
         />
-        {!navCollapsed && (
+        {!collapsed && (
           <div className="min-w-0">
             <h1 className="text-sm font-black text-white leading-tight tracking-tight">Crolana</h1>
           </div>
@@ -192,7 +169,7 @@ export function Sidebar() {
       </div>
 
       {/* Solana network badge */}
-      {isSolana && !navCollapsed && (
+      {isSolana && !collapsed && (
         <div className="mx-2 mt-2 px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 rounded-lg flex items-center gap-2">
           <span className="text-purple-400 text-xs">◎</span>
           <span className="text-purple-300 text-[10px] font-bold uppercase tracking-wider">
@@ -207,27 +184,27 @@ export function Sidebar() {
         <NavGroup
           title={isSolana ? '◎ NFT Workflow' : 'NFT Workflow'}
           items={nftItems}
-          collapsed={navCollapsed}
+          collapsed={collapsed}
           solana={isSolana}
         />
         <NavGroup
           title="🚀 Launchpad"
           items={LAUNCHPAD}
-          collapsed={navCollapsed}
+          collapsed={collapsed}
           accent={!isSolana}
           solana={isSolana && false}
         />
         <NavGroup
           title={defiLabel}
           items={defiItems}
-          collapsed={navCollapsed}
+          collapsed={collapsed}
           solana={isSolana}
         />
-        <NavGroup title="System" items={SYSTEM} collapsed={navCollapsed} />
+        <NavGroup title="System" items={SYSTEM} collapsed={collapsed} />
       </nav>
 
       {/* Footer */}
-      {!navCollapsed && (
+      {!collapsed && (
         <div className="p-3 border-t border-slate-800 space-y-2">
           <div className="bg-slate-800/60 rounded-lg p-2.5">
             <div className="flex items-center gap-1.5 mb-1">
@@ -258,24 +235,16 @@ export function Sidebar() {
       {/* Collapse toggle — larger hit target for mobile */}
       <button
         onClick={() => {
-          if (isMobile) {
-            setMobileOpen(!mobileOpen);
-          } else {
-            const next = !collapsed;
-            setCollapsed(next);
-            document.documentElement.style.setProperty(
-              '--sidebar-width',
-              next ? '4rem' : '16rem'
-            );
-          }
+          const next = !collapsed;
+          setCollapsed(next);
+          document.documentElement.style.setProperty('--sidebar-width', getSidebarWidth(next));
         }}
         className="absolute -right-4 top-20 w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-slate-400 hover:text-white hover:bg-blue-600 hover:border-blue-500 transition-all z-10 shadow-lg"
         title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       >
-        {(isMobile ? !mobileOpen : collapsed) ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+        {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
       </button>
     </div>
-    </>
   );
 }
