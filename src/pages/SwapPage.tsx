@@ -310,9 +310,9 @@ function _SwapPageEvm() {
           Swap tokens on Cronos
           {routerUsed
             ? <span className="ml-1 text-blue-400 font-medium">via {routerUsed}</span>
-            : <span className="ml-1">via Best Price</span>}
-          {network.chainId === 25 && (
-            <span className="ml-2 text-[10px] text-slate-500 border border-slate-700 rounded px-1">MULTI-DEX</span>
+            : <span className="ml-1">via {routerConfig.name}</span>}
+          {import.meta.env.VITE_ENABLE_MULTI_ROUTER === 'true' && (
+            <span className="ml-2 text-[10px] text-slate-500 border border-slate-700 rounded px-1">MULTI-ROUTER</span>
           )}
         </p>
       </div>

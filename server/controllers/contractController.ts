@@ -49,7 +49,12 @@ export const compileContractController = async (req: Request, res: Response) => 
     if (errors.length > 0) return res.status(400).json({ error: 'Invalid config', details: errors });
 
     const source = generateContractSource(config);
-    const contractName = config.name.replace(/[^a-zA-Z0-9_]/g, '').replace(/^[0-9]+/, '') || 'MyNFT';
+    // Derive contractName from config; fall back to extracting from source if name is empty
+    const rawName = (config.name || '').replace(/[^a-zA-Z0-9_]/g, '').replace(/^[0-9]+/, '');
+    const contractName = rawName || (() => {
+      const m = source.match(/\bcontract\s+([A-Za-z_][A-Za-z0-9_]*)\s*[{(]/);
+      return m ? m[1] : 'MyNFT';
+    })();
     const result = await compileContract(source, contractName);
 
     if (result.error) return res.status(400).json({ error: result.error });

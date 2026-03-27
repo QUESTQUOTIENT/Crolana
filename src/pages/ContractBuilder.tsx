@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
 import { AdvancedContractConfig, ContractType } from '../types';
-import { Settings, Code, Rocket, CheckCircle, RefreshCw, Zap, Layers, Database, Shield, AlertTriangle, Copy, ExternalLink, Globe, Twitter, MessageCircle, Github } from 'lucide-react';
+import { Settings, Code, Rocket, CheckCircle, RefreshCw, Zap, Layers, Database, Shield, AlertTriangle, Copy, ExternalLink, Globe } from 'lucide-react';
 import { isSolanaNetwork } from '../types';
 import { Link } from 'react-router-dom';
 import { ethers } from 'ethers';
@@ -35,10 +35,6 @@ export function ContractBuilder() {
   const [deploymentStatus, setDeploymentStatus] = useState('');
   const [txHash, setTxHash] = useState('');
   const [gasEstimate, setGasEstimate] = useState('');
-  const [socialLinks, setSocialLinks] = useState({
-    website: '', twitter: '', telegram: '', github: '', description: '',
-  });
-  const updateSocial = (k: string, v: string) => setSocialLinks(p => ({ ...p, [k]: v }));
 
   const currentStep = !generatedSource ? 0 : !compilationResult ? 1 : !deployedAddress ? 2 : 3;
   const steps = ['Configure', 'Generate', 'Compile & Estimate', 'Deploy'];
@@ -61,7 +57,7 @@ export function ContractBuilder() {
     }
     const notifId = addNotification({ type: 'loading', title: 'Generating Contract', message: 'Building Solidity source…', duration: 0 });
     try {
-      const res = await fetch('/api/contract/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...advancedContractConfig, socialLinks }) });
+      const res = await fetch('/api/contract/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(advancedContractConfig) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Generation failed');
       setGeneratedSource(data.source);
@@ -301,35 +297,6 @@ export function ContractBuilder() {
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Hidden URI (pre-reveal)</label>
                   <input type="text" value={advancedContractConfig.advanced.hiddenURI} onChange={(e) => updateAdvancedContractConfig({ advanced: { ...advancedContractConfig.advanced, hiddenURI: e.target.value } })} placeholder="ipfs://..." className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none font-mono" />
-                </div>
-              </div>
-            </section>
-
-            <section>
-              <SH icon={Globe} title="Social & Website Links" />
-              <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
-                Optional metadata embedded as comments in the Solidity source for on-chain reference.
-              </p>
-              <div className="space-y-2">
-                <div>
-                  <label className="flex items-center gap-1 text-xs text-slate-400 mb-1"><Globe className="w-3 h-3" /> Website</label>
-                  <input type="url" value={socialLinks.website} onChange={e => updateSocial('website', e.target.value)} placeholder="https://myproject.io" className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none" />
-                </div>
-                <div>
-                  <label className="flex items-center gap-1 text-xs text-slate-400 mb-1"><Twitter className="w-3 h-3" /> Twitter / X</label>
-                  <input type="url" value={socialLinks.twitter} onChange={e => updateSocial('twitter', e.target.value)} placeholder="https://twitter.com/myproject" className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none" />
-                </div>
-                <div>
-                  <label className="flex items-center gap-1 text-xs text-slate-400 mb-1"><MessageCircle className="w-3 h-3" /> Telegram</label>
-                  <input type="url" value={socialLinks.telegram} onChange={e => updateSocial('telegram', e.target.value)} placeholder="https://t.me/myproject" className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none" />
-                </div>
-                <div>
-                  <label className="flex items-center gap-1 text-xs text-slate-400 mb-1"><Github className="w-3 h-3" /> GitHub</label>
-                  <input type="url" value={socialLinks.github} onChange={e => updateSocial('github', e.target.value)} placeholder="https://github.com/myproject" className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none" />
-                </div>
-                <div>
-                  <label className="flex items-center gap-1 text-xs text-slate-400 mb-1">Description</label>
-                  <textarea value={socialLinks.description} onChange={e => updateSocial('description', e.target.value)} placeholder="A short description of your NFT project…" rows={2} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 outline-none resize-none" />
                 </div>
               </div>
             </section>

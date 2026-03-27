@@ -80,18 +80,27 @@ export const generateTokenContract = async (req: Request, res: Response) => {
 // Compile
 // ─────────────────────────────────────────────────────────────
 
+// Extract contractName directly from Solidity source — fallback when state is stale/null.
+function extractContractName(source: string): string {
+  const m = source.match(/\bcontract\s+([A-Za-z_][A-Za-z0-9_]*)\s*[{(]/);
+  return m ? m[1] : 'Contract';
+}
+
 export const compileTokenContract = async (req: Request, res: Response) => {
   let finalSource = '';
   let finalContractName = '';
   try {
     const { source, contractName, config } = req.body;
 
-    if (source && typeof source === 'string' && contractName && typeof contractName === 'string') {
-      // Path 1: TokenBuilder sends pre-generated { source, contractName }
+    if (source && typeof source === 'string') {
+      // Path 1: TokenBuilder sends pre-generated source
+      // contractName is optional — extract from source if missing/null/empty
       finalSource = source;
-      finalContractName = contractName;
+      finalContractName = (contractName && typeof contractName === 'string' && contractName.trim())
+        ? contractName.trim()
+        : extractContractName(source);
     } else if (config && typeof config === 'object') {
-      // Path 2: generate from config
+      // Path 2: generate from config first, then compile
       if (!config.name?.trim() || !config.symbol?.trim() || !config.initialSupply) {
         return res.status(400).json({ error: 'config requires name, symbol, and initialSupply' });
       }
@@ -99,7 +108,7 @@ export const compileTokenContract = async (req: Request, res: Response) => {
       finalSource = result.source;
       finalContractName = result.contractName;
     } else {
-      return res.status(400).json({ error: 'Provide { source, contractName } or { config }' });
+      return res.status(400).json({ error: 'Provide { source } or { source, contractName } or { config }' });
     }
 
     if (!finalSource.includes('pragma solidity')) {

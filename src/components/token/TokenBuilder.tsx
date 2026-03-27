@@ -1,19 +1,16 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useAppStore } from '../../store';
 import {
   ChevronDown, ChevronUp, Settings, Shield, Zap, Percent,
   Sliders, CheckCircle, Loader2, Code, Rocket, Copy, ExternalLink, AlertTriangle,
-  Globe, Twitter, MessageCircle, Github,
 } from 'lucide-react';
 import { ethers } from 'ethers';
-import { isSolanaNetwork } from '../../types';
 
 // ─── Sub-components OUTSIDE the main component (critical!) ───────────────────
 // If defined inside, React sees a new component type every render → unmounts
 // the input on every keystroke → focus lost after every character typed.
 
-type SectionId = 'basic' | 'social' | 'ownership' | 'trading' | 'tax' | 'advanced' | 'modern';
+type SectionId = 'basic' | 'ownership' | 'trading' | 'tax' | 'advanced' | 'modern';
 
 interface SectionProps {
   id: SectionId;
@@ -93,14 +90,20 @@ function Toggle({ label, desc, checked, onChange }: ToggleProps) {
   );
 }
 
+// Extract contract name from Solidity source — used as fallback when contractName
+// state is null (e.g. stale state after hot-reload or edge case in state hydration).
+function extractContractName(source: string): string {
+  const m = source.match(/\bcontract\s+([A-Za-z_][A-Za-z0-9_]*)\s*[{(]/);
+  return m ? m[1] : 'Contract';
+}
+
 // ─── Main TokenBuilder component ─────────────────────────────────────────────
 
 export function TokenBuilder() {
   const { addNotification, updateNotification, network, walletAddress } = useAppStore();
-  const isSolana = isSolanaNetwork(network);
   // All sections open by default — user can collapse any they don't need
   const [expandedSections, setExpandedSections] = useState<Set<SectionId>>(
-    new Set(['basic', 'social', 'ownership', 'trading', 'tax', 'advanced', 'modern'] as SectionId[])
+    new Set(['basic', 'ownership', 'trading', 'tax', 'advanced', 'modern'] as SectionId[])
   );
   const [isGenerating, setIsGenerating]       = useState(false);
   const [isCompiling,  setIsCompiling]        = useState(false);
@@ -137,12 +140,11 @@ export function TokenBuilder() {
     hasBlacklist:         false,   // address blacklist (anti-bot / compliance)
     useRoles:             false,   // AccessControl roles instead of single owner
     logoURI:              '',      // on-chain logoURI() for wallets/explorers
-    // Social / project links (stored in contract metadata)
-    website:              '',
-    twitter:              '',
-    telegram:             '',
-    github:               '',
-    description:          '',
+    // ── Project links (stored on-chain in comments / deployment record) ──
+    projectWebsite:       '',
+    projectTwitter:       '',
+    projectDiscord:       '',
+    projectTelegram:      '',
   });
 
   const update = (key: string, val: any) =>
@@ -194,12 +196,6 @@ export function TokenBuilder() {
           hasBlacklist: form.hasBlacklist,
           useRoles:     form.useRoles,
           logoURI:      form.logoURI,
-          // Social / project metadata
-          website:     form.website,
-          twitter:     form.twitter,
-          telegram:    form.telegram,
-          github:      form.github,
-          description: form.description,
         }),
       });
       const data = await res.json();
@@ -216,14 +212,17 @@ export function TokenBuilder() {
 
   // ── Compile ───────────────────────────────────────────────────────────────
   const handleCompile = async () => {
-    if (!generatedSource || !contractName) return;
+    if (!generatedSource) return;
+    // Use contractName from state; extract from source as safety fallback in case
+    // state is stale (hot-reload edge case or async state timing issue).
+    const nameToUse = contractName?.trim() || extractContractName(generatedSource);
     setIsCompiling(true);
     const notifId = addNotification({ type: 'loading', title: 'Compiling with solc', message: 'May take 15–30 seconds…', duration: 0 });
     try {
       const res = await fetch('/api/token/compile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source: generatedSource, contractName }),
+        body: JSON.stringify({ source: generatedSource, contractName: nameToUse }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Compilation failed');
@@ -293,26 +292,6 @@ export function TokenBuilder() {
     addNotification({ type: 'success', title: 'Copied!', message: '', duration: 2000 });
   };
 
-  if (isSolana) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-64 gap-4 p-8 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mx-auto">
-          <Zap className="w-8 h-8 text-purple-400" />
-        </div>
-        <h2 className="text-xl font-bold text-white">Solana Token Builder</h2>
-        <p className="text-slate-400 max-w-md text-sm">
-          On Solana, tokens are created using the SPL Token program. Use the Minting page to mint SPL tokens and manage your Solana token collection. ERC-20 contracts are only available on Cronos (EVM) networks.
-        </p>
-        <div className="flex gap-3">
-          <Link to="/minting"
-            className="flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-xl transition-colors">
-            <Zap className="w-4 h-4" /> Go to Solana Minting
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* ── LEFT: Configuration ─────────────────────────────────────────── */}
@@ -369,61 +348,6 @@ export function TokenBuilder() {
             checked={form.fixedSupply}
             onChange={() => update('fixedSupply', !form.fixedSupply)}
           />
-        </FormSection>
-
-        {/* Social & Project Links */}
-        <FormSection id="social" icon={Globe} title="Social & Project Links" expanded={expandedSections} onToggle={toggleSection}>
-          <p className="text-xs text-slate-500 mb-2 leading-relaxed">
-            Optional metadata stored in the contract — wallets, explorers, and token lists can display these.
-          </p>
-          <FormInput
-            label="Project Description"
-            placeholder="A DeFi token on Cronos…"
-            value={form.description}
-            onChange={(e) => update('description', e.target.value)}
-          />
-          <div className="grid grid-cols-1 gap-2">
-            <div className="relative">
-              <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1"><Globe className="w-3 h-3" /> Website</label>
-              <input
-                type="url"
-                placeholder="https://myproject.io"
-                value={form.website}
-                onChange={(e) => update('website', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none transition-colors"
-              />
-            </div>
-            <div className="relative">
-              <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1"><Twitter className="w-3 h-3" /> Twitter / X</label>
-              <input
-                type="url"
-                placeholder="https://twitter.com/myproject"
-                value={form.twitter}
-                onChange={(e) => update('twitter', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none transition-colors"
-              />
-            </div>
-            <div className="relative">
-              <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1"><MessageCircle className="w-3 h-3" /> Telegram</label>
-              <input
-                type="url"
-                placeholder="https://t.me/myproject"
-                value={form.telegram}
-                onChange={(e) => update('telegram', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none transition-colors"
-              />
-            </div>
-            <div className="relative">
-              <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1"><Github className="w-3 h-3" /> GitHub</label>
-              <input
-                type="url"
-                placeholder="https://github.com/myproject"
-                value={form.github}
-                onChange={(e) => update('github', e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none transition-colors"
-              />
-            </div>
-          </div>
         </FormSection>
 
         {/* Ownership */}
@@ -537,6 +461,25 @@ export function TokenBuilder() {
               />
             )}
           </div>
+          {/* Project social / website links */}
+          <div className="pt-1 space-y-2">
+            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider px-1">Project Links (optional — recorded with deployment)</p>
+            <FormInput label="Website URL" value={form.projectWebsite}
+              onChange={e => update('projectWebsite', e.target.value)}
+              placeholder="https://yourproject.xyz" />
+            <div className="grid grid-cols-2 gap-2">
+              <FormInput label="Twitter / X" value={form.projectTwitter}
+                onChange={e => update('projectTwitter', e.target.value)}
+                placeholder="https://x.com/yourproject" />
+              <FormInput label="Discord" value={form.projectDiscord}
+                onChange={e => update('projectDiscord', e.target.value)}
+                placeholder="https://discord.gg/..." />
+            </div>
+            <FormInput label="Telegram" value={form.projectTelegram}
+              onChange={e => update('projectTelegram', e.target.value)}
+              placeholder="https://t.me/yourproject" />
+          </div>
+
           <Toggle
             label="EIP-2612 Permit (gasless approvals)"
             desc="Sign-based approvals — no extra gas tx for the approve step. Used by Uniswap, 1inch, etc."

@@ -1,76 +1,38 @@
 /**
  * server/services/compiler.ts
  *
- * Solc compiler wrapped in a Worker thread so the Express event loop is never
- * blocked during 2–30 s compilations.
+ * Synchronous solc compilation — Railway-proof, zero worker-thread complexity.
  *
- * RAILWAY FIX — why the previous approach failed:
+ * Why synchronous:
+ *  - Worker threads with eval:true have subtle ESM/CJS incompatibilities across
+ *    Node versions and Railway's build environment.
+ *  - solc is synchronous by design; it typically completes in 2–8 s for token
+ *    contracts, which is well within Railway's 30 s request timeout.
+ *  - This is a developer tool (not a high-concurrency API), so one blocking
+ *    compile at a time is perfectly acceptable.
  *
- *   Old code looked for compilerWorker.js on disk (file path resolution).
- *   On Railway, `npm run build` only runs `vite build` (frontend only) — it
- *   does NOT compile server TypeScript. So compilerWorker.js never exists.
- *   The fallback tried `--import tsx/esm` in the Worker execArgv, but Worker
- *   threads do not inherit the parent process's module loader, and tsx/esm
- *   is not always resolvable in the child thread context → crash.
- *
- * NEW APPROACH — inline eval worker:
- *
- *   Instead of pointing Worker at a file, we pass the worker code as a
- *   JavaScript string using `{ eval: true }`. No file lookup = no path
- *   resolution = no Railway / tsx incompatibility.
- *
- *   The inline code is plain CommonJS-compatible ESM that:
- *     - Uses createRequire (Node built-in) to load the CJS `solc` package
- *     - Scans process.cwd()/node_modules for Solidity import resolution
- *     - Posts { ok, output } or { ok:false, error } back to the parent
+ * solc is a CJS package; we load it via createRequire so this ESM-based
+ * server can import it without issues.
  */
 
-import path from 'path';
-import { Worker } from 'worker_threads';
-
-// ─── Inline worker source (ESM, eval: true) ───────────────────────────────────
-// Written as a plain JS string — no TypeScript, no tsx, no file system lookup.
-// createRequire lets us load the CJS `solc` package from an ESM eval context.
-const WORKER_CODE = `
-import { workerData, parentPort } from 'worker_threads';
 import { createRequire } from 'module';
-import { pathToFileURL } from 'url';
 import fs   from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-// createRequire needs a real file:// URL — use cwd so node_modules resolves correctly
-const require = createRequire(pathToFileURL(path.join(process.cwd(), 'index.js')).href);
-const solc = require('solc');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
 
-function findImports(importPath) {
-  // Search order: project root, server/, server/services/
-  const roots = [
-    process.cwd(),
-    path.join(process.cwd(), 'server'),
-    path.join(process.cwd(), 'server', 'services'),
-  ];
-  for (const root of roots) {
-    try {
-      const full = path.join(root, 'node_modules', importPath);
-      if (fs.existsSync(full)) return { contents: fs.readFileSync(full, 'utf8') };
-    } catch {}
-  }
-  // Absolute import fallback
-  if (fs.existsSync(importPath)) {
-    try { return { contents: fs.readFileSync(importPath, 'utf8') }; } catch {}
-  }
-  return { error: 'Import not found: ' + importPath };
-}
-
+// Load solc (CJS) from project node_modules via createRequire.
+// Works on local (tsx), Railway (tsx in production), and compiled js.
+const require = createRequire(import.meta.url);
+let solc: any;
 try {
-  const output = JSON.parse(
-    solc.compile(JSON.stringify(workerData.input), { import: findImports })
-  );
-  parentPort.postMessage({ ok: true, output });
-} catch (err) {
-  parentPort.postMessage({ ok: false, error: err.message });
+  solc = require('solc');
+} catch (e: any) {
+  console.error('[compiler] FATAL: solc not found —', e.message);
+  // If solc is missing the entire compile route will 500; that is the correct behaviour.
 }
-`.trim();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,98 +45,122 @@ export interface CompilationResult {
   error?:       string;
 }
 
-// ─── Worker runner ────────────────────────────────────────────────────────────
+// ─── Import resolver (for contracts that import OpenZeppelin etc.) ─────────────
 
-function compileInWorker(input: object): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(WORKER_CODE, {
-      eval:       true,        // inline string — no file lookup
-      workerData: { input },
-    });
-
-    const timeout = setTimeout(() => {
-      worker.terminate();
-      reject(new Error('Compilation timed out (> 60 s). Contract may be too large.'));
-    }, 60_000);
-
-    worker.once('message', (msg) => {
-      clearTimeout(timeout);
-      if (msg.ok) resolve(msg.output);
-      else reject(new Error(msg.error));
-    });
-    worker.once('error', (err) => { clearTimeout(timeout); reject(err); });
-    worker.once('exit',  (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) reject(new Error(`Compiler worker exited with code ${code}`));
-    });
-  });
+function findImports(importPath: string): { contents: string } | { error: string } {
+  const roots = [
+    process.cwd(),
+    path.resolve(__dirname, '..', '..'),
+    path.resolve(__dirname, '..'),
+  ];
+  for (const root of roots) {
+    try {
+      const full = path.join(root, 'node_modules', importPath);
+      if (fs.existsSync(full)) return { contents: fs.readFileSync(full, 'utf8') };
+    } catch {}
+  }
+  if (fs.existsSync(importPath)) {
+    try { return { contents: fs.readFileSync(importPath, 'utf8') }; } catch {}
+  }
+  return { error: `Import not found: ${importPath}` };
 }
 
-// ─── Contract finder ─────────────────────────────────────────────────────────
+// ─── Output parser ────────────────────────────────────────────────────────────
 
-function findContractInOutput(output: any, sourceFileName: string, expectedName: string) {
+function findContractInOutput(
+  output:         any,
+  sourceFileName: string,
+  expectedName:   string,
+): { abi: any[]; bytecode: string } | null {
   const contracts = output?.contracts;
   if (!contracts) return null;
 
-  // 1. Exact source file + exact contract name
+  // 1. Exact file + exact name
   const sf = contracts[sourceFileName];
   if (sf?.[expectedName]?.abi) {
     const c = sf[expectedName];
     return { abi: c.abi, bytecode: c.evm?.bytecode?.object ?? '' };
   }
+
   // 2. First contract in the expected source file
   if (sf) {
-    const keys = Object.keys(sf);
-    if (keys.length > 0 && sf[keys[0]]?.abi) {
-      const c = sf[keys[0]];
-      return { abi: c.abi, bytecode: c.evm?.bytecode?.object ?? '' };
-    }
+    const first = Object.values(sf)[0] as any;
+    if (first?.abi) return { abi: first.abi, bytecode: first.evm?.bytecode?.object ?? '' };
   }
-  // 3. Any file: prefer exact name with non-empty bytecode
-  for (const [, fileContracts] of Object.entries(contracts) as any) {
+
+  // 3. Any file — prefer the expected name
+  for (const fileContracts of Object.values(contracts) as any[]) {
     if (typeof fileContracts !== 'object') continue;
-    if (fileContracts[expectedName]?.evm?.bytecode?.object?.length > 100) {
-      const c = fileContracts[expectedName];
-      return { abi: c.abi, bytecode: c.evm.bytecode.object };
-    }
+    const exact = fileContracts[expectedName];
+    if (exact?.evm?.bytecode?.object?.length > 100)
+      return { abi: exact.abi, bytecode: exact.evm.bytecode.object };
   }
-  // 4. Last resort: any contract with non-empty bytecode
-  for (const [, fileContracts] of Object.entries(contracts) as any) {
+
+  // 4. Last resort — any contract with non-empty bytecode
+  for (const fileContracts of Object.values(contracts) as any[]) {
     if (typeof fileContracts !== 'object') continue;
-    for (const [, c] of Object.entries(fileContracts) as any) {
-      if ((c as any)?.evm?.bytecode?.object?.length > 100) {
-        return { abi: (c as any).abi, bytecode: (c as any).evm.bytecode.object };
-      }
+    for (const c of Object.values(fileContracts) as any[]) {
+      if (c?.evm?.bytecode?.object?.length > 100)
+        return { abi: c.abi, bytecode: c.evm.bytecode.object };
     }
   }
+
   return null;
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Public compile function ──────────────────────────────────────────────────
+
+// Extract the primary contract name from Solidity source.
+function extractNameFromSource(source: string): string {
+  const m = source.match(/\bcontract\s+([A-Za-z_][A-Za-z0-9_]*)\s*[{(]/);
+  return m ? m[1] : 'Contract';
+}
 
 export async function compileContract(
   sourceCode:   string,
-  contractName: string,
+  contractName: string = '',
 ): Promise<CompilationResult> {
-  const safeName      = contractName.replace(/[^a-zA-Z0-9_]/g, '') || 'Contract';
+
+  if (!solc) {
+    return {
+      abi: [], bytecode: '', source: sourceCode, contractName,
+      error: 'solc compiler not available. Run: npm install --legacy-peer-deps',
+    };
+  }
+
+  // Derive a safe identifier: prefer contractName param → extract from source → 'Contract'
+  const safeName = (contractName || '').replace(/[^a-zA-Z0-9_]/g, '')
+    || extractNameFromSource(sourceCode)
+    || 'Contract';
   const sourceFileName = `${safeName}.sol`;
+
+  // Adaptive optimizer: large contracts need fewer runs to stay under 24 KB.
+  const sourceKB = sourceCode.length / 1024;
+  const optRuns  = sourceKB > 16 ? 20 : sourceKB > 8 ? 50 : 200;
 
   const input = {
     language: 'Solidity',
     sources:  { [sourceFileName]: { content: sourceCode } },
     settings: {
+      // 'paris' — Cronos EVM does not support PUSH0 (Shanghai/Cancun).
+      // Using 'paris' avoids "invalid opcode" on mainnet deployment.
+      evmVersion:      'paris',
       outputSelection: { '*': { '*': ['abi', 'evm.bytecode', 'evm.deployedBytecode'] } },
-      optimizer:       { enabled: true, runs: 200 },
+      optimizer:       { enabled: true, runs: optRuns },
     },
   };
 
+  console.log(`[compiler] ${safeName}: ${sourceKB.toFixed(1)} KB, optimizer runs=${optRuns}`);
+
+  // Compile synchronously — solc is a synchronous C++ binding.
   let output: any;
   try {
-    output = await compileInWorker(input);
+    output = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports }));
   } catch (err: any) {
+    console.error('[compiler] solc threw:', err.message);
     return {
       abi: [], bytecode: '', source: sourceCode, contractName: safeName,
-      error: `Compilation failed: ${err.message}`,
+      error: `Compiler crashed: ${err.message}`,
     };
   }
 
@@ -182,36 +168,35 @@ export async function compileContract(
   const errors    = allErrors.filter((e: any) => e.severity === 'error');
   const warnings  = allErrors
     .filter((e: any) => e.severity === 'warning')
-    .map((e: any) => e.formattedMessage ?? e.message);
+    .map((e: any) => (e.formattedMessage ?? e.message) as string);
 
   if (errors.length > 0) {
-    return {
-      abi: [], bytecode: '', source: sourceCode, contractName: safeName,
-      error: errors.map((e: any) => e.formattedMessage ?? e.message).join('\n'),
-    };
+    const msg = errors.map((e: any) => e.formattedMessage ?? e.message).join('\n');
+    console.error(`[compiler] ✗ ${safeName} —`, msg.slice(0, 400));
+    return { abi: [], bytecode: '', source: sourceCode, contractName: safeName, error: msg };
   }
 
   const found = findContractInOutput(output, sourceFileName, safeName);
   if (!found) {
     return {
       abi: [], bytecode: '', source: sourceCode, contractName: safeName,
-      error: `Contract "${safeName}" not found in compiler output. ` +
-             `Ensure the contract name matches the Solidity "contract" keyword.`,
-    };
-  }
-  if (!found.bytecode || found.bytecode.length === 0) {
-    return {
-      abi: found.abi, bytecode: '', source: sourceCode, contractName: safeName,
-      error: 'Compilation succeeded but produced empty bytecode ' +
-             '(is this an interface or abstract contract?)',
+      error: `Contract "${safeName}" not found in compiler output. Check that the contract name matches the Solidity "contract" keyword exactly.`,
     };
   }
 
-  console.log(
-    `[compiler] ✓ ${safeName} — ` +
-    `${Math.round(found.bytecode.length / 2 / 1024)}KB bytecode, ` +
-    `${found.abi.length} ABI entries`,
-  );
+  if (!found.bytecode || found.bytecode.length === 0) {
+    return {
+      abi: found.abi, bytecode: '', source: sourceCode, contractName: safeName,
+      error: 'Compilation produced empty bytecode. If all extensions are enabled, try disabling Flash Mint or Blacklist to reduce contract size below 24 KB.',
+    };
+  }
+
+  const byteSize = found.bytecode.length / 2;
+  console.log(`[compiler] ✓ ${safeName} — ${byteSize} B, ${found.abi.length} ABI entries, runs=${optRuns}`);
+  if (byteSize > 22_000) {
+    console.warn(`[compiler] ⚠ ${safeName} is ${byteSize} B — approaching 24 KB deploy limit.`);
+  }
+
   return {
     abi:          found.abi,
     bytecode:     found.bytecode,

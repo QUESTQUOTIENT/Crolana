@@ -1,12 +1,13 @@
-# nixpacks.toml — Railway build configuration
+# nixpacks.toml — Railway build configuration for Crolana
+# The server runs entirely via `tsx` (TypeScript execute) — no TS compilation step needed.
+# Vite compiles the frontend into dist/ which Express serves statically.
 
 [phases.setup]
 nixPkgs = ["nodejs_20"]
 
 [phases.install]
 cmds = [
-  "npm install --legacy-peer-deps --no-audit --prefer-offline",
-  "npm install @reown/appkit @reown/appkit-adapter-wagmi viem wagmi @tanstack/react-query"
+  "npm install --legacy-peer-deps --no-audit --prefer-offline"
 ]
 
 [phases.build]
