@@ -1,0 +1,21 @@
+# nixpacks.toml — Railway build configuration
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = [
+  "npm install --legacy-peer-deps --no-audit --prefer-offline"
+]
+
+[phases.build]
+cmds = [
+  "npx prisma generate",
+  "npm run build"
+]
+
+[variables]
+NODE_ENV = "production"
+
+[start]
+cmd = "npm run start"

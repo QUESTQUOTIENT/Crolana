@@ -1,0 +1,136 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────────
+  # Main application
+  # ─────────────────────────────────────────────
+  app:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    container_name: cronos-studio
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://studio:studio_pass@postgres:5432/cronos_studio?schema=public
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CRONOSCAN_API_KEY: ${CRONOSCAN_API_KEY:-}
+      PINATA_API_KEY: ${PINATA_API_KEY:-}
+      PINATA_SECRET: ${PINATA_SECRET:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - cronos-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────
+  # PostgreSQL
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cronos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: studio_pass
+      POSTGRES_DB: cronos_studio
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - cronos-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d cronos_studio"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # Redis — session cache, rate limiting
+  # ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cronos-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - cronos-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # Analytics Indexer service
+  # ─────────────────────────────────────────────
+  analytics-indexer:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    container_name: cronos-analytics
+    restart: unless-stopped
+    command: node --import tsx/esm services/analytics-indexer/index.ts
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://studio:studio_pass@postgres:5432/cronos_studio?schema=public
+      CRONOS_RPC_MAINNET: ${CRONOS_RPC_MAINNET:-https://evm.cronos.org}
+      CRONOS_RPC_TESTNET: ${CRONOS_RPC_TESTNET:-https://evm-t3.cronos.org}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cronos-net
+
+  # ─────────────────────────────────────────────
+  # Cronos Listener (event indexer)
+  # ─────────────────────────────────────────────
+  cronos-listener:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    container_name: cronos-listener
+    restart: unless-stopped
+    command: node --import tsx/esm services/cronos-listener/index.ts
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://studio:studio_pass@postgres:5432/cronos_studio?schema=public
+      REDIS_URL: redis://redis:6379
+      CRONOS_RPC_MAINNET: ${CRONOS_RPC_MAINNET:-https://evm.cronos.org}
+      CRONOS_WS_MAINNET: ${CRONOS_WS_MAINNET:-wss://ws.cronos.org}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cronos-net
+
+volumes:
+  postgres-data:
+  redis-data:
+  uploads:
+
+networks:
+  cronos-net:
+    driver: bridge
