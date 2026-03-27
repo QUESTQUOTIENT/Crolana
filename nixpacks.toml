@@ -1,0 +1,25 @@
+# nixpacks.toml — production safe + extra deps
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = [
+  # ✅ install your actual project deps (CRITICAL)
+  "npm install --legacy-peer-deps --no-audit --prefer-offline",
+
+  # ✅ THEN ensure required wallet deps exist
+  "npm install @reown/appkit @reown/appkit-adapter-wagmi wagmi viem @wagmi/core"
+]
+
+[phases.build]
+cmds = [
+  "npx prisma generate",
+  "npm run build"
+]
+
+[variables]
+NODE_ENV = "production"
+
+[start]
+cmd = "npm run start"
