@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm list:*)",
+      "Bash(npm run:*)",
+      "Bash(tee build-error.log)"
+    ]
+  }
+}

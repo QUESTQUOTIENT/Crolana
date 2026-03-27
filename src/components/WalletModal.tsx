@@ -692,19 +692,16 @@ export function WalletModal({ isOpen, onClose }: { isOpen: boolean; onClose: () 
                 }
                 setWcPending(true);
                 try {
-                  // Dynamic import — WalletConnect only loads when user clicks
-                  // This keeps the main bundle size unchanged when WC is enabled.
-                  const { createAppKit } = await import('@reown/appkit/react');
-                  const { WagmiAdapter }  = await import('@reown/appkit-adapter-wagmi');
-                  const { cronos }        = await import('@reown/appkit/networks');
-                  const adapter = new WagmiAdapter({ networks: [cronos], projectId: WC_PROJECT_ID });
-                  const kit = createAppKit({
-                    adapters: [adapter],
-                    networks: [cronos],
+                  // AppKit v1 API - import from main package
+                  const { createAppKit } = await import('@reown/appkit');
+                  const { cronos } = await import('@reown/appkit/networks');
+                  const appKit = createAppKit({
                     projectId: WC_PROJECT_ID,
+                    networks: [cronos],
+                    defaultNetwork: cronos,
                     features: { analytics: false },
                   });
-                  (kit as any).open();
+                  (appKit as any).open();
                 } catch (e: any) {
                   addNotification({ type: 'error', title: 'WalletConnect failed',
                     message: e.message ?? 'Could not open WalletConnect modal', duration: 5000 });
