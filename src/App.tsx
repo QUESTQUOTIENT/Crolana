@@ -7,30 +7,30 @@ import { BackButtonHandler } from './components/BackButtonHandler';
 
 
 
-const Dashboard        = React.lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
-const AssetCreation    = React.lazy(() => import('./pages/AssetCreation').then(m => ({ default: m.AssetCreation })));
-const MetadataBuilder  = React.lazy(() => import('./pages/MetadataBuilder').then(m => ({ default: m.MetadataBuilder })));
-const IpfsManager      = React.lazy(() => import('./pages/IpfsManager').then(m => ({ default: m.IpfsManager })));
-const ContractBuilder  = React.lazy(() => import('./pages/ContractBuilder').then(m => ({ default: m.ContractBuilder })));
-const DeployWizard     = React.lazy(() => import('./pages/DeployWizard').then(m => ({ default: m.DeployWizard })));
-const MintingDashboard = React.lazy(() => import('./pages/MintingDashboard').then(m => ({ default: m.MintingDashboard })));
-const NFTGallery       = React.lazy(() => import('./pages/NFTGallery').then(m => ({ default: m.NFTGallery })));
-const MarketplacePrep  = React.lazy(() => import('./pages/MarketplacePrep').then(m => ({ default: m.MarketplacePrep })));
-const Analytics        = React.lazy(() => import('./pages/Analytics').then(m => ({ default: m.Analytics })));
-const Settings         = React.lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
-const About            = React.lazy(() => import('./pages/About').then(m => ({ default: m.About })));
-const TokenBuilderPage = React.lazy(() => import('./pages/TokenBuilderPage').then(m => ({ default: m.TokenBuilderPage })));
-const SwapPage         = React.lazy(() => import('./pages/SwapPage').then(m => ({ default: m.SwapPage })));
-const LiquidityManager = React.lazy(() => import('./pages/LiquidityManager').then(m => ({ default: m.LiquidityManager })));
-const Launchpad        = React.lazy(() => import('./pages/Launchpad').then(m => ({ default: m.Launchpad })));
+const Dashboard        = React.lazy(() => import('./pages/Dashboard'));
+const AssetCreation    = React.lazy(() => import('./pages/AssetCreation'));
+const MetadataBuilder  = React.lazy(() => import('./pages/MetadataBuilder'));
+const IpfsManager      = React.lazy(() => import('./pages/IpfsManager'));
+const ContractBuilder  = React.lazy(() => import('./pages/ContractBuilder'));
+const DeployWizard     = React.lazy(() => import('./pages/DeployWizard'));
+const MintingDashboard = React.lazy(() => import('./pages/MintingDashboard'));
+const NFTGallery       = React.lazy(() => import('./pages/NFTGallery'));
+const MarketplacePrep  = React.lazy(() => import('./pages/MarketplacePrep'));
+const Analytics        = React.lazy(() => import('./pages/Analytics'));
+const Settings         = React.lazy(() => import('./pages/Settings'));
+const About            = React.lazy(() => import('./pages/About'));
+const TokenBuilderPage = React.lazy(() => import('./pages/TokenBuilderPage'));
+const SwapPage         = React.lazy(() => import('./pages/SwapPage'));
+const LiquidityManager = React.lazy(() => import('./pages/LiquidityManager'));
+const Launchpad        = React.lazy(() => import('./pages/Launchpad'));
 
 
 
-const SolanaLiquidity    = React.lazy(() => import('./pages/SolanaLiquidity').then(m => ({ default: m.SolanaLiquidity })));
-const SolanaTokenBuilder = React.lazy(() => import('./pages/SolanaTokenBuilder').then(m => ({ default: m.SolanaTokenBuilder })));
-const SolanaAnalytics    = React.lazy(() => import('./pages/SolanaAnalytics').then(m => ({ default: m.SolanaAnalytics })));
-const SolanaMinting      = React.lazy(() => import('./pages/SolanaMinting').then(m => ({ default: m.SolanaMinting })));
-const PublicMint         = React.lazy(() => import('./pages/PublicMint').then(m => ({ default: m.PublicMint })));
+const SolanaLiquidity    = React.lazy(() => import('./pages/SolanaLiquidity'));
+const SolanaTokenBuilder = React.lazy(() => import('./pages/SolanaTokenBuilder'));
+const SolanaAnalytics    = React.lazy(() => import('./pages/SolanaAnalytics'));
+const SolanaMinting      = React.lazy(() => import('./pages/SolanaMinting'));
+const PublicMint         = React.lazy(() => import('./pages/PublicMint'));
 
 
 import { useAppStore }     from './store';

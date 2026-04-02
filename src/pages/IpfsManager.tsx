@@ -605,3 +605,4 @@ export function IpfsManager() {
     </div>
   );
 }
+export default IpfsManager;

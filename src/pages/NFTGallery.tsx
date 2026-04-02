@@ -467,3 +467,4 @@ export function NFTGallery() {
     </div>
   );
 }
+export default NFTGallery;

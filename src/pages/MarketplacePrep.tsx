@@ -416,3 +416,4 @@ export function MarketplacePrep() {
     </div>
   );
 }
+export default MarketplacePrep;

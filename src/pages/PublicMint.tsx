@@ -304,3 +304,4 @@ export function PublicMint() {
     </div>
   );
 }
+export default PublicMint;

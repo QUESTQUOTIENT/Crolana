@@ -444,3 +444,4 @@ function LayerCard({ layer, onUpdateName, onRemove, onDrop, onRemoveTrait }: {
     </div>
   );
 }
+export default AssetCreation;

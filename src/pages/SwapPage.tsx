@@ -797,3 +797,4 @@ function _SwapPageEvm() {
     </div>
   );
 }
+export default SwapPage;

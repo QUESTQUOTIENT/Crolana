@@ -737,3 +737,4 @@ export function DeployWizard() {
     </div>
   );
 }
+export default DeployWizard;

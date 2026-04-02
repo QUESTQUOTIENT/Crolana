@@ -652,3 +652,4 @@ export function Launchpad() {
     </div>
   );
 }
+export default Launchpad;

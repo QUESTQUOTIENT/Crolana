@@ -353,3 +353,4 @@ export function MetadataBuilder() {
     </div>
   );
 }
+export default MetadataBuilder;

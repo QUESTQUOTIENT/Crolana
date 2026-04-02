@@ -459,3 +459,4 @@ export function ContractBuilder() {
     </div>
   );
 }
+export default ContractBuilder;

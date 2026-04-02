@@ -242,3 +242,4 @@ function AuthorityToggle({ icon: Icon, label, description, enabled, onChange, wa
     </button>
   );
 }
+export default SolanaTokenBuilder;

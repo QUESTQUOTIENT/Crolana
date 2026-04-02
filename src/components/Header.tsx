@@ -13,8 +13,8 @@ import { cn } from '../lib/utils';
 import { useUnifiedWallet } from '../hooks/useUnifiedWallet';
 
 // Lazy load heavy wallet components
-const WalletMenu = lazy(() => import('./WalletMenu').then(module => ({ default: module.WalletMenu })));
-const WalletModal = lazy(() => import('./WalletModal').then(module => ({ default: module.WalletModal })));
+const WalletMenu = lazy(() => import('./WalletMenu'));
+const WalletModal = lazy(() => import('./WalletModal'));
 
 const ALL_NETWORKS = [CRONOS_MAINNET, CRONOS_TESTNET, SOLANA_MAINNET, SOLANA_DEVNET];
 

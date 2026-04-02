@@ -362,3 +362,4 @@ export function WalletMenu({ isOpen, onClose, nativeBalance }: Props) {
     </div>
   );
 }
+export default WalletMenu;

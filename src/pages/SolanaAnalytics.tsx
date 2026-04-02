@@ -246,3 +246,4 @@ export function SolanaAnalytics() {
     </div>
   );
 }
+export default SolanaAnalytics;

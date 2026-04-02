@@ -306,3 +306,4 @@ function SolTokenSelectorModal({ tokens, onSelect, onClose, selected, title }: {
     </div>
   );
 }
+export default SolanaSwap;

@@ -1164,3 +1164,4 @@ export function LiquidityManager() {
     </div>
   );
 }
+export default LiquidityManager;

@@ -711,3 +711,4 @@ export function WalletModal({ isOpen, onClose }: { isOpen: boolean; onClose: () 
     </div>
   );
 }
+export default WalletModal;

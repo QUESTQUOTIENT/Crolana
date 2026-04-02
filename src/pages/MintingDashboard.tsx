@@ -78,3 +78,4 @@ export function MintingDashboard() {
     </div>
   );
 }
+export default MintingDashboard;
